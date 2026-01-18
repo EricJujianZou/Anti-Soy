@@ -920,6 +920,13 @@ def _build_batched_prompt(repo: dict[str, Any], company_description: str) -> str
                 languages.add(lang)
     
     # === BUILD THE MEGA PROMPT ===
+    error_snippets_text = "\n".join(error_snippets[:4]) if error_snippets else "No try/catch patterns found"
+    comment_samples_text = "\n".join(comment_samples[:5]) if comment_samples else "No comments found"
+    dep_files_text = "\n".join(
+        [f"=== {k} ===\n{v[:1500]}" for k, v in list(dep_file_content.items())[:2]]
+    )
+    commit_messages_text = "\n".join(f"- {msg[:80]}" for msg in messages[:20])
+
     prompt = f"""You are a code quality analyzer. Analyze this repository and return scores for 8 metrics.
 
 RESPOND ONLY WITH VALID JSON in this exact format (no other text):
@@ -951,20 +958,20 @@ Sample paths: {tree[:40]}
 {readme_content if readme_content else "No README found"}
 
 ### ERROR HANDLING SAMPLES
-{chr(10).join(error_snippets[:4]) if error_snippets else "No try/catch patterns found"}
+{error_snippets_text}
 
 ### COMMENT SAMPLES
-{chr(10).join(comment_samples[:5]) if comment_samples else "No comments found"}
+{comment_samples_text}
 
 ### DEPENDENCIES
 Count: {len(dependencies)}, Density: {dep_density:.2f} per 1000 LOC
 List: {dependencies[:40]}
 Dep files: {list(dep_file_content.keys())}
-{chr(10).join(f'=== {k} ===\n{v[:1500]}' for k, v in list(dep_file_content.items())[:2])}
+{dep_files_text}
 
 ### COMMIT MESSAGES
 Total: {len(messages)}, Low-signal: {low_signal_count}
-{chr(10).join(f"- {msg[:80]}" for msg in messages[:20])}
+{commit_messages_text}
 
 ### REAL PROBLEM INDICATORS
 Real-world signs: {real_indicators if real_indicators else "None"}
