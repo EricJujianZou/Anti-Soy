@@ -2,16 +2,22 @@ import json
 import os
 import subprocess
 import tempfile
+import os
+import json
+import asyncio
+import requests
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from models import Base, Repo, User
+from models import Base, User, Repo, RepoData
+from repo_analyzer import extract_repo_data, analyze_repository
 
 load_dotenv()
 
@@ -241,9 +247,14 @@ def create_user_metadata(
 
 
 @app.put("/repo")
-def clone_repo(repo: str = Query(..., description="GitHub link to a repository")):
+async def analyze_repo(
+    repo: str = Query(..., description="GitHub link to a repository"),
+    company_description: Optional[str] = Query(None, description="Company mission/job description for alignment analysis"),
+    background_tasks: BackgroundTasks = None
+):
     """
-    Clone a GitHub repository into a temporary directory.
+    Clone and analyze a GitHub repository.
+    Returns immediately with task status, analysis runs in background.
     Link must be in format: https://github.com/username/repo-name
     """
     parsed = urlparse(repo)
@@ -263,26 +274,197 @@ def clone_repo(repo: str = Query(..., description="GitHub link to a repository")
     username = path_parts[0]
     repo_name = path_parts[1]
     repo_link = f"https://github.com/{username}/{repo_name}"
+    
+    # Find or create repo entry in DB
+    with Session(engine) as session:
+        db_repo = session.query(Repo).filter(Repo.github_link == repo_link).first()
+        
+        if not db_repo:
+            # Create a repo without user association for independent analysis
+            db_repo = Repo(
+                user_id=1,  # Default user ID - should be updated based on your needs
+                github_link=repo_link,
+                stars=0,
+                is_open_source_project=True,
+                prs_merged=0,
+                languages="{}"
+            )
+            session.add(db_repo)
+            session.commit()
+            session.refresh(db_repo)
+        
+        repo_id = db_repo.id
+    
+    # Add background task for analysis
+    background_tasks.add_task(
+        run_repo_analysis,
+        repo_link=repo_link,
+        repo_id=repo_id,
+        company_description=company_description
+    )
+    
+    return {
+        "status": "analysis_started",
+        "repo_link": repo_link,
+        "repo_id": repo_id,
+        "message": "Analysis running in background. Query /repo/{repo_id} for results."
+    }
 
-    # Create temp directory and clone repo
-    with tempfile.TemporaryDirectory() as temp_dir:
+
+def run_repo_analysis(repo_link: str, repo_id: int, company_description: Optional[str] = None):
+    """
+    Background task to clone, analyze, and store repository metrics.
+    """
+    temp_dir = None
+    try:
+        # Create temp directory for cloning
+        temp_dir = tempfile.mkdtemp()
+        
+        # Clone the repository
         result = subprocess.run(
-            ["git", "clone", repo_link, temp_dir], capture_output=True, text=True
+            ["git", "clone", "--depth", "100", repo_link, temp_dir],
+            capture_output=True,
+            text=True,
+            timeout=120
         )
 
         if result.returncode != 0:
             raise HTTPException(
                 status_code=500, detail=f"Failed to clone repository: {result.stderr}"
             )
+            
+        
+        # Extract repository data
+        repo_data = extract_repo_data(temp_dir)
+        
+        # Run analysis (async function, need to run in event loop)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            analysis_results = loop.run_until_complete(
+                analyze_repository(repo_data, company_description)
+            )
+        finally:
+            loop.close()
+        
+        # Store results in database
+        with Session(engine) as session:
+            # Check if RepoData already exists
+            existing_data = session.query(RepoData).filter(RepoData.repo_id == repo_id).first()
+            
+            if existing_data:
+                # Update existing
+                existing_data.files_organized = analysis_results.get("files_organized")
+                existing_data.test_suites = analysis_results.get("test_suites")
+                existing_data.readme = analysis_results.get("readme")
+                existing_data.api_keys = analysis_results.get("api_keys")
+                existing_data.error_handling = analysis_results.get("error_handling")
+                existing_data.comments = analysis_results.get("comments")
+                existing_data.print_or_logging = analysis_results.get("print_or_logging")
+                existing_data.dependencies = analysis_results.get("dependencies")
+                existing_data.commit_density = analysis_results.get("commit_density")
+                existing_data.commit_lines = analysis_results.get("commit_lines")
+                existing_data.concurrency = analysis_results.get("concurrency")
+                existing_data.caching = analysis_results.get("caching")
+                existing_data.solves_real_problem = analysis_results.get("solves_real_problem")
+                existing_data.aligns_company = analysis_results.get("aligns_company")
+            else:
+                # Create new
+                repo_data_entry = RepoData(
+                    repo_id=repo_id,
+                    files_organized=analysis_results.get("files_organized"),
+                    test_suites=analysis_results.get("test_suites"),
+                    readme=analysis_results.get("readme"),
+                    api_keys=analysis_results.get("api_keys"),
+                    error_handling=analysis_results.get("error_handling"),
+                    comments=analysis_results.get("comments"),
+                    print_or_logging=analysis_results.get("print_or_logging"),
+                    dependencies=analysis_results.get("dependencies"),
+                    commit_density=analysis_results.get("commit_density"),
+                    commit_lines=analysis_results.get("commit_lines"),
+                    concurrency=analysis_results.get("concurrency"),
+                    caching=analysis_results.get("caching"),
+                    solves_real_problem=analysis_results.get("solves_real_problem"),
+                    aligns_company=analysis_results.get("aligns_company"),
+                )
+                session.add(repo_data_entry)
+            
+            session.commit()
+        
+        print(f"Analysis complete for {repo_link}")
+        
+    except Exception as e:
+        print(f"Error analyzing {repo_link}: {e}")
+        _store_error_result(repo_id, str(e)[:200])
+    
+    finally:
+        # Cleanup temp directory
+        if temp_dir:
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
 
-        cloned_path = temp_dir
 
-        # TODO: Future implementation will process the cloned repo here
+def _store_error_result(repo_id: int, error_message: str):
+    """Store error result in database"""
+    error_result = {"score": 0, "comment": f"Analysis failed: {error_message}"}
+    
+    with Session(engine) as session:
+        existing_data = session.query(RepoData).filter(RepoData.repo_id == repo_id).first()
+        
+        if existing_data:
+            existing_data.files_organized = error_result
+        else:
+            repo_data_entry = RepoData(
+                repo_id=repo_id,
+                files_organized=error_result,
+            )
+            session.add(repo_data_entry)
+        
+        session.commit()
 
+
+@app.get("/repo/{repo_id}")
+def get_repo_analysis(repo_id: int):
+    """
+    Get analysis results for a repository.
+    """
+    with Session(engine) as session:
+        db_repo = session.query(Repo).filter(Repo.id == repo_id).first()
+        
+        if not db_repo:
+            raise HTTPException(status_code=404, detail="Repository not found")
+        
+        repo_data = session.query(RepoData).filter(RepoData.repo_id == repo_id).first()
+        
+        if not repo_data:
+            return {
+                "repo_id": repo_id,
+                "github_link": db_repo.github_link,
+                "status": "pending",
+                "message": "Analysis not yet complete or not started"
+            }
+        
         return {
-            "status": "cloned",
-            "repo_link": repo_link,
-            "username": username,
-            "repo_name": repo_name,
-            "temp_path": cloned_path,
+            "repo_id": repo_id,
+            "github_link": db_repo.github_link,
+            "status": "complete",
+            "metrics": {
+                "files_organized": repo_data.files_organized,
+                "test_suites": repo_data.test_suites,
+                "readme": repo_data.readme,
+                "api_keys": repo_data.api_keys,
+                "error_handling": repo_data.error_handling,
+                "comments": repo_data.comments,
+                "print_or_logging": repo_data.print_or_logging,
+                "dependencies": repo_data.dependencies,
+                "commit_density": repo_data.commit_density,
+                "commit_lines": repo_data.commit_lines,
+                "concurrency": repo_data.concurrency,
+                "caching": repo_data.caching,
+                "solves_real_problem": repo_data.solves_real_problem,
+                "aligns_company": repo_data.aligns_company,
+            }
         }
