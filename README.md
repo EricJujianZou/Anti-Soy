@@ -2,8 +2,6 @@
 
 Startups are struggling to find good candidates and good candidates don't hear about startups.
 
-Andrew Montgomery
-
 # The problem
 
 It is very difficult for companies to find **competent** technical people who know their stuff.
@@ -14,9 +12,9 @@ It is very difficult for companies to find **competent** technical people who kn
 
 # Traditional solutions
 
-Extensive interviewing and research by HR/senior devs
-Headhunting on social media
-Interviewing
+- Extensive interviewing and research by HR/senior devs
+- Headhunting on social media
+- Interviewing
 
 # Our Solution
 
@@ -45,8 +43,8 @@ github username
 
 ## Output
 
-ability to ship real features.
-production ready software engineer
-good practices
-have community recognition
-ability to adapt to the company's stack
+- ability to ship real features.
+- production ready software engineer
+- good practices
+- have community recognition
+- ability to adapt to the company's stack
