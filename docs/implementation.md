@@ -21,10 +21,9 @@ Technical reference for implementing the Anti-Soy candidate analysis platform.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  FRONTEND (React)                                   │
-│  ├─ Bulk Upload Interface                          │
-│  │   └─ Upload CSV with GitHub usernames           │
-│  ├─ Profile Preloading (Scan 100 profiles)         │
+│  FRONTEND (React Next.js)                           │
+│  ├─ username enter                                 │
+│  ├─ #OUT OF SCOPE Profile Preloading (Scan 100 profiles)         │
 │  ├─ Analysis Progress Tracker                      │
 │  └─ Dashboard (Charts, Scores, Insights)            │
 │      ├─ Ranked Candidate List                      │
@@ -34,10 +33,10 @@ Technical reference for implementing the Anti-Soy candidate analysis platform.
 │      ├─ Red Flags & Strengths Lists                │
 │      └─ Recommended Interview Questions             │
 └─────────────────────────────────────────────────────┘
-                        ↓ HTTP POST /analyze/batch
+                        ↓ HTTP POST
 ┌─────────────────────────────────────────────────────┐
 │  BACKEND (FastAPI + Python)                         │
-│  ├─ /analyze/batch endpoint                        │
+│     
 │  ├─ Database (SQLAlchemy + SQLite)                 │
 │  ├─ GitHub GraphQL Client                           │
 │  └─ Analysis Pipeline:                              │
@@ -141,30 +140,7 @@ Technical reference for implementing the Anti-Soy candidate analysis platform.
 
 ## Analysis Pipeline
 
-### 1. Bulk Input Processing
-
-```
-Input: CSV file with GitHub usernames or list of 100 profiles
-↓
-Parse CSV, extract usernames
-↓
-Create batch analysis job in database
-↓
-For each username:
-  - Check if already analyzed (query database)
-  - If not, add to analysis queue
-↓
-Output: Batch job ID, queue of usernames to analyze
-```
-
-**Implementation:**
-
-- Accept CSV upload via React frontend
-- FastAPI endpoint: POST /analyze/batch
-- Store job in SQLite via SQLAlchemy
-- Return job ID for progress tracking
-
-### 2. Repository Discovery
+### 1. Repository Discovery
 
 ```
 Input: GitHub username
