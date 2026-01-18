@@ -1,8 +1,10 @@
+import asyncio
 import json
 import os
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 import requests
@@ -11,7 +13,8 @@ from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from models import Base, Repo, User
+from models import Base, Repo, RepoData, User
+from repo_analyzer import analyze_repository, extract_repo_data
 
 load_dotenv()
 
@@ -166,9 +169,6 @@ def fetch_repos(user: User, session: Session):
 
     except Exception as e:
         print(f"Error fetching repos: {e}")
-        # We catch exceptions so we don't rollback the user creation entirely if GitHub fails?
-        # User requested "fetch repos", if it fails, maybe we should propagate.
-        # But 'parse all data...' implies logic.
         raise e
 
 
@@ -241,9 +241,15 @@ def create_user_metadata(
 
 
 @app.put("/repo")
-def clone_repo(repo: str = Query(..., description="GitHub link to a repository")):
+def clone_repo(
+    repo: str = Query(..., description="GitHub link to a repository"),
+    company_description: Optional[str] = Query(
+        None, description="Company mission/job description for alignment analysis"
+    ),
+):
     """
-    Clone a GitHub repository into a temporary directory.
+    Analyze a GitHub repository. Clones it, runs analysis functions concurrently,
+    and stores results in repo_data.
     Link must be in format: https://github.com/username/repo-name
     """
     parsed = urlparse(repo)
@@ -264,25 +270,83 @@ def clone_repo(repo: str = Query(..., description="GitHub link to a repository")
     repo_name = path_parts[1]
     repo_link = f"https://github.com/{username}/{repo_name}"
 
-    # Create temp directory and clone repo
-    with tempfile.TemporaryDirectory() as temp_dir:
-        result = subprocess.run(
-            ["git", "clone", repo_link, temp_dir], capture_output=True, text=True
-        )
-
-        if result.returncode != 0:
+    with Session(engine) as session:
+        # Validate repo exists in database
+        db_repo = session.query(Repo).filter(Repo.github_link == repo_link).first()
+        if not db_repo:
             raise HTTPException(
-                status_code=500, detail=f"Failed to clone repository: {result.stderr}"
+                status_code=404,
+                detail=f"Repo not found in database. Run PUT /metadata first for user {username}",
             )
 
-        cloned_path = temp_dir
+        # Return existing repo_data if already analyzed
+        if db_repo.repo_data:
+            return {
+                "status": "already_analyzed",
+                "repo_id": db_repo.id,
+                "repo_link": repo_link,
+                "files_organized": db_repo.repo_data.files_organized,
+                "test_suites": db_repo.repo_data.test_suites,
+                "readme": db_repo.repo_data.readme,
+                "api_keys": db_repo.repo_data.api_keys,
+                "error_handling": db_repo.repo_data.error_handling,
+                "comments": db_repo.repo_data.comments,
+                "print_or_logging": db_repo.repo_data.print_or_logging,
+                "dependencies": db_repo.repo_data.dependencies,
+                "commit_density": db_repo.repo_data.commit_density,
+                "commit_lines": db_repo.repo_data.commit_lines,
+                "concurrency": db_repo.repo_data.concurrency,
+                "caching": db_repo.repo_data.caching,
+                "solves_real_problem": db_repo.repo_data.solves_real_problem,
+                "aligns_company": db_repo.repo_data.aligns_company,
+            }
 
-        # TODO: Future implementation will process the cloned repo here
+        # Clone and analyze
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = subprocess.run(
+                ["git", "clone", "--depth", "100", repo_link, temp_dir],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
 
-        return {
-            "status": "cloned",
-            "repo_link": repo_link,
-            "username": username,
-            "repo_name": repo_name,
-            "temp_path": cloned_path,
-        }
+            if result.returncode != 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to clone repository: {result.stderr}",
+                )
+
+            # Extract repo data
+            repo_data = extract_repo_data(temp_dir)
+
+            # Run async analyses synchronously
+            results = asyncio.run(analyze_repository(repo_data, company_description))
+
+            # Create RepoData and store results
+            repo_data_entry = RepoData(
+                repo_id=db_repo.id,
+                files_organized=results["files_organized"],
+                test_suites=results["test_suites"],
+                readme=results["readme"],
+                api_keys=results["api_keys"],
+                error_handling=results["error_handling"],
+                comments=results["comments"],
+                print_or_logging=results["print_or_logging"],
+                dependencies=results["dependencies"],
+                commit_density=results["commit_density"],
+                commit_lines=results["commit_lines"],
+                concurrency=results["concurrency"],
+                caching=results["caching"],
+                solves_real_problem=results["solves_real_problem"],
+                aligns_company=results["aligns_company"],
+            )
+            session.add(repo_data_entry)
+            session.commit()
+
+            return {
+                "status": "analyzed",
+                "repo_id": db_repo.id,
+                "repo_link": repo_link,
+                **results,
+            }
+
