@@ -25,6 +25,7 @@ def fetch_repos(user: User):
     pass
 
 
+
 def parse_github_username(github_link: str) -> str:
     """Extract username from GitHub link (user profile or repo link)"""
     parsed = urlparse(github_link)
@@ -49,7 +50,7 @@ def read_root():
 @app.put("/metadata")
 def create_user_metadata(user: str = Query(..., description="GitHub link to user profile or repo")):
     """
-    Create a user from a GitHub link.
+    Create a user from a GitHub link, or return existing user if already exists.
     Accepts both user profile links (https://github.com/username) 
     and repo links (https://github.com/username/repo-name).
     """
@@ -61,21 +62,35 @@ def create_user_metadata(user: str = Query(..., description="GitHub link to user
     github_link = f"https://github.com/{username}"
     
     with Session(engine) as session:
-        db_user = User(username=username, github_link=github_link)
-        session.add(db_user)
-        session.flush()
+        # Check if user already exists
+        db_user = session.query(User).filter(User.username == username).first()
         
-        fetch_repos(db_user)
-        
-        session.commit()
-        session.refresh(db_user)
+        if not db_user:
+            # Create new user
+            db_user = User(username=username, github_link=github_link)
+            session.add(db_user)
+            session.flush()
+            fetch_repos(db_user)
+            session.commit()
+            session.refresh(db_user)
         
         return {
             "id": db_user.id,
             "username": db_user.username,
             "github_link": db_user.github_link,
             "created_at": db_user.created_at,
-            "updated_at": db_user.updated_at
+            "updated_at": db_user.updated_at,
+            "repos": [
+                {
+                    "id": repo.id,
+                    "github_link": repo.github_link,
+                    "stars": repo.stars,
+                    "is_open_source_project": repo.is_open_source_project,
+                    "prs_merged": repo.prs_merged,
+                    "languages": repo.languages
+                }
+                for repo in db_user.repos
+            ]
         }
 
 
