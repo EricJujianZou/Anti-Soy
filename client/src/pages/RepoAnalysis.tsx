@@ -12,7 +12,7 @@ import { RepoAnalysis as RepoAnalysisData } from "@/services/api";
 import {
   computeOverallScore,
   computeRadarData,
-  computeAIFootprint,
+  computeAIUsageLevel,
   generateStrengths,
   generateRedFlags,
   generateSuggestions,
@@ -103,7 +103,7 @@ const RepoAnalysis = () => {
   const repoName = repoLink ? getRepoName(repoLink) : repoId || "Unknown";
   const overallScore = analysis ? computeOverallScore(analysis) : 0;
   const radarData = analysis ? computeRadarData(analysis) : [];
-  const aiFootprint = analysis ? computeAIFootprint(analysis) : 0;
+  const aiUsage = analysis ? computeAIUsageLevel(analysis) : null;
   const strengths = analysis ? generateStrengths(analysis) : [];
   const redFlags = analysis ? generateRedFlags(analysis) : [];
   const suggestions = analysis ? generateSuggestions(analysis) : [];
@@ -128,8 +128,8 @@ const RepoAnalysis = () => {
               <p className="text-muted-foreground mb-4">
                 Please select a repository from the repositories page.
               </p>
-              <Link to="/" className="text-primary hover:underline">
-                ← Back to home
+              <Link to="/repositories" className="text-primary hover:underline">
+                ← Back to repositories
               </Link>
             </div>
           </div>
@@ -162,10 +162,10 @@ const RepoAnalysis = () => {
             <ProgressTracker steps={steps} className="w-full max-w-md" />
 
             <Link
-              to="/"
+              to="/repositories"
               className="mt-8 text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
-              ← Back to home
+              ← Back to repositories
             </Link>
           </div>
         ) : (
@@ -175,10 +175,10 @@ const RepoAnalysis = () => {
               <div>
                 <div className="flex items-center gap-3 mb-2">
                   <Link
-                    to="/"
+                    to="/repositories"
                     className="text-muted-foreground hover:text-foreground transition-colors text-sm"
                   >
-                    ← Home
+                    ← Repositories
                   </Link>
                   <span className="text-muted-foreground">/</span>
                   <h1 className="text-2xl font-bold text-foreground">
@@ -210,8 +210,7 @@ const RepoAnalysis = () => {
               />
               <ScoreDisplay
                 label="AI Footprint"
-                value={aiFootprint}
-                suffix="%"
+                value={aiUsage?.level ?? "Low"}
               />
               <ScoreDisplay
                 label="Production Ready"
@@ -235,16 +234,16 @@ const RepoAnalysis = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-xs uppercase tracking-widest text-muted-foreground">
-                        AI Footprint
+                        AI Usage
                       </div>
                       <div className="text-3xl font-bold text-primary tabular-nums">
-                        {aiFootprint}%
+                        {aiUsage?.level ?? "Low"}
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground text-right">
-                      Higher means more AI
+                      Comment and commit
                       <br />
-                      usage detected
+                      patterns combined
                     </div>
                   </div>
                   <div className="mt-4 space-y-2 text-sm">
