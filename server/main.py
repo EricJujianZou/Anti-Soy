@@ -32,8 +32,7 @@ def fetch_repos(user: User, session: Session):
     """Fetch user's repos from GitHub and store in DB"""
     token = os.getenv("GITHUB_TOKEN")
     if not token:
-        print("Warning: GITHUB_TOKEN not found in .env")
-        return
+        raise HTTPException(status_code=500, detail="GITHUB_TOKEN not found in .env")
 
     headers = {"Authorization": f"Bearer {token}"}
 
