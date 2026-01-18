@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session
 
 from models import Base, User
 
@@ -13,7 +13,6 @@ from models import Base, User
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "database.db"
 engine = create_engine(f"sqlite:///{DATABASE_PATH}", connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -61,18 +60,15 @@ def create_user_metadata(user: str = Query(..., description="GitHub link to user
     
     github_link = f"https://github.com/{username}"
     
-    db = SessionLocal()
-    try:
-        # Create user row
+    with Session(engine) as session:
         db_user = User(username=username, github_link=github_link)
-        db.add(db_user)
-        db.flush()  # Get the ID before calling fetch_repos
+        session.add(db_user)
+        session.flush()
         
-        # Call placeholder function
         fetch_repos(db_user)
         
-        db.commit()
-        db.refresh(db_user)
+        session.commit()
+        session.refresh(db_user)
         
         return {
             "id": db_user.id,
@@ -81,8 +77,6 @@ def create_user_metadata(user: str = Query(..., description="GitHub link to user
             "created_at": db_user.created_at,
             "updated_at": db_user.updated_at
         }
-    finally:
-        db.close()
 
 
 @app.put("/repo")
