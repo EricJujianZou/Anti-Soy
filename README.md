@@ -60,10 +60,10 @@ We get it. You're moving fast, burning runway, and every hire is critical. We've
 
 ---
 
-## Ready to Stop Hiring Vibe Coders?
+## Ready to Stop Hiring Soy Devs?
 
 **Contact us for a demo**: [e2zou@uwaterloo.ca](mailto:e2zou@uwaterloo.ca)
 
 ---
 
-_Anti-Soy detects soy developers (vibe coders) so you can hire real engineers who ship production-ready software._
+_Anti-Soy detects soy developers so you can hire real engineers who ship production-ready software._
