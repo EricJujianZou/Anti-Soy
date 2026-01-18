@@ -1,52 +1,69 @@
 # Anti-Soy
 
-Startups are struggling to find good candidates and good candidates don't hear about startups.
+**Stop wasting founder time on resumes. Find real engineers in minutes, not hours.**
 
-Andrew Montgomery
+---
 
-# The problem
+## The Problem You're Facing
 
-It is very difficult for companies to find **competent** technical people who know their stuff.
+As an early-stage startup founder, you know the pain:
 
-- many people overly misrepresent their skills on their resume
-- too reliant on AI and will only every be as smart as Claude
-- dont have a large online presence / are unknown
+- **Your time is too valuable** to spend hours reviewing GitHub profiles and resumes
+- **Can't afford a dedicated HR team** to properly vet technical candidates
+- **Resumes lie** - candidates misrepresent skills, lean too heavily on AI-generated code
+- **Coding tests don't reflect reality** - they test algorithms, not production engineering
+- **You need to know**: Can they actually ship? Do they write maintainable code? Or is it all AI vibe-coded?
 
-# Traditional solutions
+Most founders spend **30 seconds glancing at a GitHub profile**, then rely on "tell me about your project" in interviews because they haven't actually reviewed the code. You know you should dig deeper, but who has the time?
 
-Extensive interviewing and research by HR/senior devs
-Headhunting on social media
-Interviewing
+---
 
-# Our Solution
+## Our Solution
 
-- look on candidate github
-  - scan the repos
-    - look for architecture decisions, why did you pick this level of abstraction for your api/app?
-    - security
-    - error handling (do you only handle the happy path? what about edge cases)
-    - vibe coded?
-    - how many dependencies do you have?
-    - Scalable?
-    - stars
-    - comments in code?
-    - does your project actually do something?
-  - look for open source contributions
-    - part of which online communities?
-    - how many prs get merged
-  - technological agility
-    - how many languages / frameworks are you competant in (projects >500 lines of code)
+**Anti-Soy analyzes GitHub profiles in 3 minutes and tells you what would take you hours to discover.**
 
-Provide a dashboard to analyze candidates. Give interviewers hints as to what to ask about to know candidate deeper.
+### How It Works
 
-## Input
+**Input**: GitHub username  
+**Output**: Comprehensive candidate analysis dashboard
 
-github username
+### What You Get
 
-## Output
+✅ **Code Quality Evaluation** - Architecture decisions, error handling, security practices  
+✅ **AI Detection Score** - % of AI-generated code vs. genuine engineering  
+✅ **Documentation & Comments** - Do they write maintainable code?  
+✅ **Real Project Analysis** - Does their code actually do something, or just look pretty?  
+✅ **Dependency Management** - Are they pulling in 500 packages for a todo app?  
+✅ **Open Source Contributions** - Community recognition, merged PRs  
+✅ **Technical Agility** - How many languages/frameworks have they mastered? (>500 LOC projects)  
+✅ **Interview Hints** - Smart questions to ask based on their code patterns
 
-ability to ship real features.
-production ready software engineer
-good practices
-have community recognition
-ability to adapt to the company's stack
+---
+
+## Why We're Different
+
+| Solution                                      | Limitation                                                       | Anti-Soy Advantage                                        |
+| --------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
+| **GitHub Insights**                           | Surface-level contribution graphs - can be gamed with AI commits | Deep code analysis of architecture, patterns, and quality |
+| **Coding Assessments** (HackerRank, LeetCode) | Tests algorithms, not real-world engineering                     | Analyzes actual shipped projects                          |
+| **Resume Screeners**                          | Keyword matching, easily fooled                                  | Inspects actual code quality and practices                |
+| **Recruiting Platforms** (Hired, TripleByte)  | Just facilitates interviews                                      | Pre-screens technical ability before you waste time       |
+| **Manual Review**                             | Takes hours per candidate                                        | 3 minutes, AI-powered + rule-based heuristics             |
+
+---
+
+## Built for Early-Stage Startups
+
+We get it. You're moving fast, burning runway, and every hire is critical. We've validated this with startup sponsors at hackathons and SMBs who face the same problem.
+
+**Pricing**: Freemium + Subscription (save research time and cost)
+
+---
+
+## Ready to Stop Hiring Vibe Coders?
+
+**Contact us for a demo**: [e2zou@uwaterloo.ca](mailto:e2zou@uwaterloo.ca)
+
+---
+
+_Anti-Soy detects soy developers (vibe coders) so you can hire real engineers who ship production-ready software._
