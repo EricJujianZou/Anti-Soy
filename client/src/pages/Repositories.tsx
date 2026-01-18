@@ -1,71 +1,137 @@
+import { useSearchParams, Link } from "react-router-dom";
 import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
 import { RepositoryCard, Repository } from "@/components/RepositoryCard";
 import { AsciiPanel } from "@/components/AsciiPanel";
-import { Link } from "react-router-dom";
+import { useUserMetadata } from "@/hooks/useApi";
+import { UserRepo } from "@/services/api";
 
-// Mock data for the top 5 most recent repositories
-const mockRepositories: Repository[] = [
-  {
-    id: "neural-search-engine",
-    name: "neural-search-engine",
-    description: "A semantic search engine powered by transformer embeddings and FAISS for lightning-fast similarity matching across large document corpora.",
-    language: "Python",
-    languageColor: "#3572A5",
-    stars: 847,
-    forks: 124,
-    lastUpdated: "2 days ago",
-    isPrivate: false,
-  },
-  {
-    id: "react-terminal-ui",
-    name: "react-terminal-ui",
-    description: "A customizable terminal emulator component for React applications with command history, autocomplete, and theming support.",
-    language: "TypeScript",
-    languageColor: "#3178c6",
-    stars: 1243,
-    forks: 89,
-    lastUpdated: "5 days ago",
-    isPrivate: false,
-  },
-  {
-    id: "cloud-infra-toolkit",
-    name: "cloud-infra-toolkit",
-    description: "Infrastructure as Code templates and utilities for deploying scalable microservices on AWS, GCP, and Azure.",
-    language: "Go",
-    languageColor: "#00ADD8",
-    stars: 432,
-    forks: 67,
-    lastUpdated: "1 week ago",
-    isPrivate: false,
-  },
-  {
-    id: "ml-pipeline-orchestrator",
-    name: "ml-pipeline-orchestrator",
-    description: "End-to-end ML pipeline management with experiment tracking, model versioning, and automated deployment workflows.",
-    language: "Python",
-    languageColor: "#3572A5",
-    stars: 289,
-    forks: 41,
-    lastUpdated: "2 weeks ago",
-    isPrivate: true,
-  },
-  {
-    id: "rust-crypto-lib",
-    name: "rust-crypto-lib",
-    description: "High-performance cryptographic primitives implemented in Rust with zero-copy operations and constant-time guarantees.",
-    language: "Rust",
-    languageColor: "#dea584",
-    stars: 567,
-    forks: 78,
-    lastUpdated: "3 weeks ago",
-    isPrivate: false,
-  },
-];
+// Helper to get primary language from languages JSON string
+function getPrimaryLanguage(languagesJson: string): { name: string; color: string } {
+  const languageColors: Record<string, string> = {
+    Python: "#3572A5",
+    TypeScript: "#3178c6",
+    JavaScript: "#f1e05a",
+    Go: "#00ADD8",
+    Rust: "#dea584",
+    Java: "#b07219",
+    C: "#555555",
+    "C++": "#f34b7d",
+    "C#": "#178600",
+    Ruby: "#701516",
+    PHP: "#4F5D95",
+    Swift: "#F05138",
+    Kotlin: "#A97BFF",
+    Scala: "#c22d40",
+    Shell: "#89e051",
+    HTML: "#e34c26",
+    CSS: "#563d7c",
+    SCSS: "#c6538c",
+    Vue: "#41b883",
+  };
+
+  try {
+    const languages = JSON.parse(languagesJson);
+    const entries = Object.entries(languages) as [string, number][];
+    if (entries.length === 0) {
+      return { name: "Unknown", color: "#808080" };
+    }
+    // Sort by bytes descending and get the first one
+    entries.sort((a, b) => b[1] - a[1]);
+    const primaryLang = entries[0][0];
+    return {
+      name: primaryLang,
+      color: languageColors[primaryLang] || "#808080",
+    };
+  } catch {
+    return { name: "Unknown", color: "#808080" };
+  }
+}
+
+// Helper to extract repo name from github link
+function getRepoName(githubLink: string): string {
+  const parts = githubLink.replace(/\/$/, "").split("/");
+  return parts[parts.length - 1] || "Unknown";
+}
+
+// Map UserRepo from API to Repository for the card component
+function mapUserRepoToRepository(repo: UserRepo, index: number): Repository {
+  const { name: language, color: languageColor } = getPrimaryLanguage(repo.languages);
+
+  return {
+    id: repo.id.toString(),
+    name: getRepoName(repo.github_link),
+    description: `${repo.is_open_source_project ? "Open source project" : "Repository"} with ${repo.prs_merged} PRs merged`,
+    language,
+    languageColor,
+    stars: repo.stars,
+    forks: 0, // Not provided by API
+    lastUpdated: "Recently",
+    isPrivate: !repo.is_open_source_project,
+    // Store the full github link for later use
+    githubLink: repo.github_link,
+  };
+}
 
 const Repositories = () => {
-  const totalStars = mockRepositories.reduce((sum, repo) => sum + repo.stars, 0);
-  const totalForks = mockRepositories.reduce((sum, repo) => sum + repo.forks, 0);
+  const [searchParams] = useSearchParams();
+  const username = searchParams.get("user");
+
+  const { data: userData, isLoading, isError } = useUserMetadata(username);
+
+  // Map repos from API to display format
+  const repositories: Repository[] = userData?.repos
+    ? userData.repos.map((repo, idx) => mapUserRepoToRepository(repo, idx))
+    : [];
+
+  const totalStars = repositories.reduce((sum, repo) => sum + repo.stars, 0);
+  const totalForks = repositories.reduce((sum, repo) => sum + repo.forks, 0);
+
+  if (isLoading) {
+    return (
+      <GridBackground>
+        <Header />
+        <main className="container mx-auto px-4 py-12">
+          <div className="flex flex-col items-center justify-center min-h-[70vh]">
+            <div className="text-center">
+              <h2 className="text-2xl font-bold text-foreground mb-4">
+                Loading repositories...
+              </h2>
+              <div className="animate-pulse text-primary">
+                <span className="glyph-spinner text-4xl">⟳</span>
+              </div>
+            </div>
+          </div>
+        </main>
+      </GridBackground>
+    );
+  }
+
+  if (isError || !userData) {
+    return (
+      <GridBackground>
+        <Header />
+        <main className="container mx-auto px-4 py-12">
+          <div className="flex flex-col items-center justify-center min-h-[70vh]">
+            <div className="text-center">
+              <h2 className="text-2xl font-bold text-foreground mb-4">
+                Failed to load repositories
+              </h2>
+              <p className="text-muted-foreground mb-4">
+                Could not fetch data for user: {username}
+              </p>
+              <Link
+                to="/"
+                className="text-primary hover:underline"
+              >
+                ← Back to home
+              </Link>
+            </div>
+          </div>
+        </main>
+      </GridBackground>
+    );
+  }
 
   return (
     <GridBackground>
@@ -85,11 +151,11 @@ const Repositories = () => {
                 </Link>
                 <span className="text-muted-foreground">/</span>
                 <h1 className="text-2xl font-bold text-foreground">
-                  Recent <span className="text-primary text-glow">Repositories</span>
+                  <span className="text-primary text-glow">@{userData.username}</span>'s Repositories
                 </h1>
               </div>
               <p className="text-sm text-muted-foreground">
-                Your top 5 most recently updated repositories
+                {repositories.length} repositories found
               </p>
             </div>
           </div>
@@ -99,7 +165,7 @@ const Repositories = () => {
             <AsciiPanel variant="highlight">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Repositories</span>
-                <span className="text-2xl font-bold text-primary">{mockRepositories.length}</span>
+                <span className="text-2xl font-bold text-primary">{repositories.length}</span>
               </div>
             </AsciiPanel>
             <AsciiPanel>
@@ -110,33 +176,41 @@ const Repositories = () => {
             </AsciiPanel>
             <AsciiPanel>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Total Forks</span>
-                <span className="text-2xl font-bold text-foreground">{totalForks.toLocaleString()}</span>
+                <span className="text-sm text-muted-foreground">Total PRs Merged</span>
+                <span className="text-2xl font-bold text-foreground">
+                  {userData.repos.reduce((sum, r) => sum + r.prs_merged, 0)}
+                </span>
               </div>
             </AsciiPanel>
           </div>
 
           {/* Repository List */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-primary">▸</span>
-              <h2 className="text-sm text-muted-foreground uppercase tracking-widest">
-                Repository List
-              </h2>
-              <div className="flex-1 h-px bg-border ml-2" />
-            </div>
+          {repositories.length > 0 ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-primary">▸</span>
+                <h2 className="text-sm text-muted-foreground uppercase tracking-widest">
+                  Repository List
+                </h2>
+                <div className="flex-1 h-px bg-border ml-2" />
+              </div>
 
-            <div className="grid grid-cols-1 gap-4">
-              {mockRepositories.map((repo, index) => (
-                <RepositoryCard
-                  key={repo.id}
-                  repository={repo}
-                  index={index}
-                  className="animate-fade-in-up"
-                />
-              ))}
+              <div className="grid grid-cols-1 gap-4">
+                {repositories.map((repo, index) => (
+                  <RepositoryCard
+                    key={repo.id}
+                    repository={repo}
+                    index={index}
+                    className="animate-fade-in-up"
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">No repositories found for this user.</p>
+            </div>
+          )}
 
           {/* Footer Note */}
           <div className="mt-8 text-center">
