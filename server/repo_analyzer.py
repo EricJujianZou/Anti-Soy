@@ -270,97 +270,78 @@ def _total_loc(files: dict[str, str]) -> int:
 # GEMINI LLM INTEGRATION
 # ============================================================================
 
-async def call_gemini(prompt: str, max_retries: int = 3) -> dict[str, Any]:
+async def call_gemini_batched(prompt: str, retries: int = 1) -> dict[str, Any]:
     """
-    Call Gemini API with a prompt.
-    Returns: {"score": 0-100, "comment": "explanation"}
+    Call Gemini API with a batched prompt for all 8 LLM metrics.
+    Returns dict with all 8 metrics, each containing {"score": 0-100, "comment": "..."}
+    Retries once on failure, then raises exception.
     """
     if not gemini_client:
-        return {"score": 50, "comment": "GEMINI_API_KEY not configured"}
+        raise RuntimeError("GEMINI_API_KEY not configured")
     
-    try:
-        system_prompt = """You are a code quality analyzer. Analyze the provided code/data and respond ONLY with valid JSON in this exact format:
-{"score": <integer 0-100>, "comment": "<brief explanation under 200 chars>"}
-
-Score guidelines:
-- 0-20: Very poor / Missing entirely
-- 21-40: Poor / Major issues
-- 41-60: Average / Some issues
-- 61-80: Good / Minor issues
-- 81-100: Excellent / Best practices
-
-Be concise and specific in your comment."""
-
-        full_prompt = f"{system_prompt}\n\n{prompt}"
-        
-        # Use async client for Gemini API
-        response = await gemini_client.models.generate_content(
+    expected_keys = [
+        "files_organized", "readme", "error_handling", "comments",
+        "dependencies", "commit_lines", "solves_real_problem", "aligns_company"
+    ]
+    
+    last_error = None
+    
+    def _sync_generate():
+        """Sync wrapper for Gemini API call"""
+        return gemini_client.models.generate_content(
             model="gemini-2.0-flash",
-            contents=full_prompt,
+            contents=prompt,
         )
-        
-        # Parse response
-        text = response.text.strip()
-        # Extract JSON from response (handle markdown code blocks)
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-        
-        result = json.loads(text)
-        
-        # Validate structure
-        if "score" not in result or "comment" not in result:
-            return {"score": 50, "comment": "Invalid LLM response structure"}
-        
-        result["score"] = max(0, min(100, int(result["score"])))
-        result["comment"] = str(result["comment"])[:500]
-        
-        return result
-        
-    except json.JSONDecodeError as e:
-        return {"score": 50, "comment": f"Failed to parse LLM response: {str(e)[:100]}"}
-    except Exception as e:
-        return {"score": 50, "comment": f"LLM error: {str(e)[:100]}"}
+    
+    for attempt in range(retries + 1):
+        try:
+            # Run sync API in thread pool to not block event loop
+            response = await asyncio.to_thread(_sync_generate)
+            
+            # Parse response
+            text = response.text.strip()
+            
+            # Extract JSON from response (handle markdown code blocks)
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(text)
+            
+            # Validate all expected keys exist
+            validated_result = {}
+            for key in expected_keys:
+                if key in result and isinstance(result[key], dict):
+                    score = result[key].get("score", 50)
+                    comment = result[key].get("comment", "No comment provided")
+                    validated_result[key] = {
+                        "score": max(0, min(100, int(score))),
+                        "comment": str(comment)[:500]
+                    }
+                else:
+                    raise ValueError(f"Missing or invalid key: {key}")
+            
+            return validated_result
+            
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+            last_error = f"Parse error: {str(e)[:100]}"
+            if attempt < retries:
+                await asyncio.sleep(1)  # Brief delay before retry
+                continue
+        except Exception as e:
+            last_error = f"API error: {str(e)[:150]}"
+            if attempt < retries:
+                await asyncio.sleep(1)
+                continue
+    
+    # Both attempts failed
+    raise RuntimeError(f"Gemini API failed after {retries + 1} attempts: {last_error}")
 
 
 # ============================================================================
-# METRIC ANALYSIS FUNCTIONS (14 metrics matching RepoData columns)
+# METRIC ANALYSIS FUNCTIONS - HEURISTICS-BASED (6 metrics)
 # ============================================================================
-
-async def analyze_files_organized(repo: dict[str, Any]) -> dict[str, Any]:
-    """Analyze file and folder organization quality"""
-    tree = repo.get("tree", [])
-    files = repo.get("files", {})
-    
-    if not tree:
-        return {"score": 0, "comment": "No files found in repository"}
-    
-    # Build context for LLM
-    top_level = set()
-    all_dirs = set()
-    for path in tree[:200]:  # Limit for prompt size
-        parts = path.split("/")
-        if len(parts) > 1:
-            top_level.add(parts[0])
-            for i in range(1, len(parts)):
-                all_dirs.add("/".join(parts[:i]))
-    
-    prompt = f"""Analyze the file organization of this repository.
-
-Top-level directories: {sorted(top_level)}
-Sample of directory structure: {sorted(list(all_dirs)[:30])}
-Total files: {len(tree)}
-Sample file paths: {tree[:50]}
-
-Evaluate:
-1. Is there clear separation (src/, tests/, docs/, etc.)?
-2. Are related files grouped logically?
-3. Is the nesting depth reasonable?
-4. Does it follow common conventions for the project type?"""
-
-    return await call_gemini(prompt)
-
 
 async def analyze_test_suites(repo: dict[str, Any]) -> dict[str, Any]:
     """Analyze test coverage and quality (heuristics-based)"""
@@ -436,33 +417,6 @@ async def analyze_test_suites(repo: dict[str, Any]) -> dict[str, Any]:
         score += 5
     
     return {"score": min(100, score), "comment": f"{test_file_count} test files. {'; '.join(comments)}"}
-
-
-async def analyze_readme(repo: dict[str, Any]) -> dict[str, Any]:
-    """Analyze README quality"""
-    files = repo.get("files", {})
-    
-    readme_content = None
-    for name in ["README.md", "readme.md", "README.rst", "README.txt", "README"]:
-        if name in files:
-            readme_content = files[name]
-            break
-    
-    if not readme_content:
-        return {"score": 0, "comment": "No README file found"}
-    
-    prompt = f"""Analyze this README file quality:
-
-{readme_content[:5000]}
-
-Evaluate:
-1. Does it explain what the project does?
-2. Are there installation/setup instructions?
-3. Are there usage examples?
-4. Is it well-formatted with headers and code blocks?
-5. Does it describe a real-world use case (not just a tutorial)?"""
-
-    return await call_gemini(prompt)
 
 
 async def analyze_api_keys(repo: dict[str, Any]) -> dict[str, Any]:
@@ -542,99 +496,6 @@ async def analyze_api_keys(repo: dict[str, Any]) -> dict[str, Any]:
     return {"score": max(0, min(100, score)), "comment": "; ".join(comments)}
 
 
-async def analyze_error_handling(repo: dict[str, Any]) -> dict[str, Any]:
-    """Analyze error handling practices"""
-    files = repo.get("files", {})
-    code_files = _get_code_files(files)
-    
-    if not code_files:
-        return {"score": 50, "comment": "No code files to analyze"}
-    
-    # Extract try/catch patterns with context
-    error_patterns = [
-        r"\btry\s*[:{]",
-        r"\bcatch\s*\(",
-        r"\bexcept\s+\w+",
-        r"\.catch\s*\(",
-    ]
-    
-    error_snippets = []
-    for path, content in list(code_files.items())[:20]:
-        for pattern in error_patterns:
-            snippets = _extract_pattern_context(content, pattern, 30)
-            for snippet in snippets[:2]:
-                error_snippets.append(f"=== {path} ===\n{snippet}")
-    
-    prompt = f"""Analyze the error handling quality in this codebase.
-
-Sample error handling code:
-{chr(10).join(error_snippets[:5])}
-
-Evaluate:
-1. Are exceptions caught specifically (not bare except)?
-2. Are errors logged or handled meaningfully?
-3. Is there proper cleanup in finally blocks?
-4. Are custom exceptions used where appropriate?
-5. Is there retry logic for transient failures?"""
-
-    return await call_gemini(prompt)
-
-
-async def analyze_comments(repo: dict[str, Any]) -> dict[str, Any]:
-    """Analyze comment quality - human vs AI written, explains intent"""
-    files = repo.get("files", {})
-    code_files = _get_code_files(files)
-    
-    if not code_files:
-        return {"score": 50, "comment": "No code files to analyze"}
-    
-    # Extract comments and docstrings
-    comment_samples = []
-    
-    for path, content in list(code_files.items())[:15]:
-        # Find comment blocks
-        lines = content.splitlines()
-        in_docstring = False
-        current_block = []
-        
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            
-            # Python docstrings
-            if '"""' in stripped or "'''" in stripped:
-                if in_docstring:
-                    current_block.append(line)
-                    comment_samples.append(f"=== {path}:{i} ===\n" + "\n".join(current_block))
-                    current_block = []
-                    in_docstring = False
-                else:
-                    in_docstring = True
-                    current_block = [line]
-            elif in_docstring:
-                current_block.append(line)
-            # Single line comments
-            elif stripped.startswith("#") or stripped.startswith("//"):
-                # Get context around comment
-                start = max(0, i - 5)
-                end = min(len(lines), i + 10)
-                snippet = "\n".join(lines[start:end])
-                comment_samples.append(f"=== {path}:{i} ===\n{snippet}")
-    
-    prompt = f"""Analyze the comment quality in this codebase.
-
-Sample comments and docstrings:
-{chr(10).join(comment_samples[:8])}
-
-Evaluate:
-1. Do comments explain WHY (intent) rather than just WHAT (behavior)?
-2. Are docstrings present for functions/classes?
-3. Do comments appear human-written (specific, contextual) or AI-generated (generic, obvious)?
-4. Is the comment density appropriate (not too few, not excessive)?
-5. Are complex algorithms or business logic explained?"""
-
-    return await call_gemini(prompt)
-
-
 async def analyze_print_or_logging(repo: dict[str, Any]) -> dict[str, Any]:
     """Analyze logging vs print usage (heuristics-based)"""
     files = repo.get("files", {})
@@ -712,41 +573,6 @@ async def analyze_print_or_logging(repo: dict[str, Any]) -> dict[str, Any]:
     return {"score": score, "comment": comment}
 
 
-async def analyze_dependencies(repo: dict[str, Any]) -> dict[str, Any]:
-    """Analyze dependency management"""
-    dependencies = repo.get("dependencies", [])
-    files = repo.get("files", {})
-    
-    # Find dependency files
-    dep_file_content = {}
-    for filename in DEPENDENCY_FILES.keys():
-        for path, content in files.items():
-            if path.endswith(filename):
-                dep_file_content[filename] = content[:3000]
-    
-    loc = _total_loc(files)
-    density = len(dependencies) / (loc / 1000) if loc > 0 else 0
-    
-    prompt = f"""Analyze the dependency management of this project.
-
-Dependencies found: {len(dependencies)}
-Dependency list: {dependencies[:50]}
-Lines of code: {loc}
-Dependency density: {density:.2f} deps per 1000 LOC
-
-Dependency files:
-{chr(10).join(f'=== {k} ===\n{v}' for k, v in list(dep_file_content.items())[:3])}
-
-Evaluate:
-1. Are dependencies pinned to specific versions?
-2. Is the number of dependencies reasonable for the project size?
-3. Are there obvious unnecessary dependencies?
-4. Is there a lock file (package-lock.json, poetry.lock, etc.)?
-5. Are dev dependencies separated from production?"""
-
-    return await call_gemini(prompt)
-
-
 async def analyze_commit_density(repo: dict[str, Any]) -> dict[str, Any]:
     """Analyze commit frequency and patterns (heuristics-based)"""
     commits = repo.get("commits", [])
@@ -818,45 +644,6 @@ async def analyze_commit_density(repo: dict[str, Any]) -> dict[str, Any]:
         comments.append("Large commit sizes")
     
     return {"score": max(0, min(100, score)), "comment": "; ".join(comments)}
-
-
-async def analyze_commit_lines(repo: dict[str, Any]) -> dict[str, Any]:
-    """Analyze commit message quality - detect AI-generated messages"""
-    commits = repo.get("commits", [])
-    
-    if not commits:
-        return {"score": 50, "comment": "No git history available"}
-    
-    # Get commit messages
-    messages = [c.get("message", "") for c in commits[:50]]
-    
-    # Low signal patterns
-    low_signal = [
-        r"^fix$", r"^update$", r"^changes?$", r"^wip$",
-        r"^\.+$", r"^asdf+$", r"^test$", r"^commit$",
-    ]
-    
-    low_signal_count = sum(
-        1 for msg in messages 
-        if any(re.match(p, msg.strip(), re.I) for p in low_signal) or len(msg.strip()) < 3
-    )
-    
-    prompt = f"""Analyze the commit message quality in this repository.
-
-Total commits analyzed: {len(messages)}
-Low-signal commits (wip, fix, update, etc.): {low_signal_count}
-
-Sample commit messages:
-{chr(10).join(f"- {msg[:100]}" for msg in messages[:25])}
-
-Evaluate:
-1. Are commit messages descriptive and meaningful?
-2. Do they follow conventional commit format (feat:, fix:, etc.)?
-3. Do messages appear human-written or AI-generated (too perfect, generic)?
-4. Is there a pattern of lazy commit messages (wip, fix, update)?
-5. Do messages explain WHAT changed and WHY?"""
-
-    return await call_gemini(prompt)
 
 
 async def analyze_concurrency(repo: dict[str, Any]) -> dict[str, Any]:
@@ -1025,117 +812,183 @@ async def analyze_caching(repo: dict[str, Any]) -> dict[str, Any]:
     return {"score": min(100, score), "comment": "; ".join(comments)}
 
 
-async def analyze_solves_real_problem(repo: dict[str, Any]) -> dict[str, Any]:
-    """Analyze if project solves a real problem vs tutorial/toy project"""
+# ============================================================================
+# BATCHED LLM ANALYSIS (8 metrics in 1 API call)
+# ============================================================================
+
+def _build_batched_prompt(repo: dict[str, Any], company_description: str) -> str:
+    """
+    Build a single comprehensive prompt for all 8 LLM-based metrics.
+    """
     tree = repo.get("tree", [])
     files = repo.get("files", {})
     commits = repo.get("commits", [])
+    dependencies = repo.get("dependencies", [])
+    code_files = _get_code_files(files)
     
-    if not tree:
-        return {"score": 0, "comment": "No files found"}
+    # === FILE ORGANIZATION CONTEXT ===
+    top_level = set()
+    all_dirs = set()
+    for path in tree[:200]:
+        parts = path.split("/")
+        if len(parts) > 1:
+            top_level.add(parts[0])
+            for i in range(1, len(parts)):
+                all_dirs.add("/".join(parts[:i]))
     
-    # Get README
+    # === README CONTEXT ===
     readme_content = ""
-    for name in ["README.md", "readme.md", "README.rst", "README"]:
+    for name in ["README.md", "readme.md", "README.rst", "README.txt", "README"]:
         if name in files:
             readme_content = files[name][:4000]
             break
     
-    # Indicators of real project
-    real_indicators = []
+    # === ERROR HANDLING CONTEXT ===
+    error_patterns = [r"\btry\s*[:{]", r"\bcatch\s*\(", r"\bexcept\s+\w+", r"\.catch\s*\("]
+    error_snippets = []
+    for path, content in list(code_files.items())[:15]:
+        for pattern in error_patterns:
+            snippets = _extract_pattern_context(content, pattern, 20)
+            for snippet in snippets[:1]:
+                error_snippets.append(f"=== {path} ===\n{snippet}")
+                if len(error_snippets) >= 4:
+                    break
+        if len(error_snippets) >= 4:
+            break
     
+    # === COMMENTS CONTEXT ===
+    comment_samples = []
+    for path, content in list(code_files.items())[:10]:
+        lines = content.splitlines()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith("//") or '"""' in stripped:
+                start = max(0, i - 3)
+                end = min(len(lines), i + 8)
+                snippet = "\n".join(lines[start:end])
+                comment_samples.append(f"=== {path}:{i} ===\n{snippet}")
+                if len(comment_samples) >= 5:
+                    break
+        if len(comment_samples) >= 5:
+            break
+    
+    # === DEPENDENCIES CONTEXT ===
+    dep_file_content = {}
+    for filename in DEPENDENCY_FILES.keys():
+        for path, content in files.items():
+            if path.endswith(filename):
+                dep_file_content[filename] = content[:2000]
+                break
+    
+    loc = _total_loc(files)
+    dep_density = len(dependencies) / (loc / 1000) if loc > 0 else 0
+    
+    # === COMMIT MESSAGES CONTEXT ===
+    messages = [c.get("message", "") for c in commits[:30]]
+    low_signal = [r"^fix$", r"^update$", r"^changes?$", r"^wip$", r"^\.+$", r"^test$", r"^commit$"]
+    low_signal_count = sum(
+        1 for msg in messages 
+        if any(re.match(p, msg.strip(), re.I) for p in low_signal) or len(msg.strip()) < 3
+    )
+    
+    # === REAL PROBLEM INDICATORS ===
+    real_indicators = []
     ci_files = [".github/workflows", ".gitlab-ci", "Jenkinsfile", ".circleci"]
     if any(any(ci in f for ci in ci_files) for f in tree):
         real_indicators.append("CI/CD pipeline")
-    
     if any("Dockerfile" in f or "docker-compose" in f for f in tree):
         real_indicators.append("Docker configuration")
-    
     if any(".env.example" in f or "config/" in f for f in tree):
         real_indicators.append("Configuration management")
-    
     if any("migrations/" in f or "schema" in f.lower() for f in tree):
         real_indicators.append("Database migrations")
     
-    # Tutorial indicators
-    tutorial_indicators = [
-        "todo-app", "hello-world", "calculator", "counter",
-        "weather-app", "tutorial", "sample-app", "demo",
-        "learning", "practice", "exercise",
-    ]
-    
+    tutorial_indicators = ["todo-app", "hello-world", "calculator", "counter", "weather-app", "tutorial", "sample-app", "demo", "learning", "practice", "exercise"]
     tree_lower = " ".join(tree).lower()
     tutorial_matches = [t for t in tutorial_indicators if t in tree_lower]
     
-    prompt = f"""Analyze if this project solves a real-world problem or is a tutorial/toy project.
-
-README content:
-{readme_content if readme_content else "No README found"}
-
-Real-world indicators found: {real_indicators if real_indicators else "None"}
-Tutorial/toy indicators found: {tutorial_matches if tutorial_matches else "None"}
-
-Commit count: {len(commits)}
-File count: {len(tree)}
-Lines of code: {_total_loc(files)}
-
-Evaluate:
-1. Does the README describe solving a real problem?
-2. Is this a tutorial clone (todo app, calculator, etc.)?
-3. Does the project complexity suggest real usage?
-4. Are there production-ready features (CI, Docker, configs)?
-5. Is this something that could be used in a professional context?"""
-
-    return await call_gemini(prompt)
-
-
-async def analyze_aligns_company(repo: dict[str, Any], company_description: Optional[str] = None) -> dict[str, Any]:
-    """Analyze if project aligns with company mission/tech stack"""
-    tree = repo.get("tree", [])
-    files = repo.get("files", {})
-    dependencies = repo.get("dependencies", [])
-    
-    if not company_description:
-        return {"score": 50, "comment": "No company description provided for alignment analysis"}
-    
-    # Get README
-    readme_content = ""
-    for name in ["README.md", "readme.md", "README.rst", "README"]:
-        if name in files:
-            readme_content = files[name][:3000]
-            break
-    
-    # Detect languages
+    # === LANGUAGES DETECTED ===
     lang_extensions = {
         ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
         ".java": "Java", ".go": "Go", ".rs": "Rust", ".rb": "Ruby",
         ".cpp": "C++", ".c": "C", ".cs": "C#", ".php": "PHP",
     }
-    
     languages = set()
     for path in tree:
         for ext, lang in lang_extensions.items():
             if path.endswith(ext):
                 languages.add(lang)
     
-    prompt = f"""Analyze if this project aligns with the company's needs.
+    # === BUILD THE MEGA PROMPT ===
+    prompt = f"""You are a code quality analyzer. Analyze this repository and return scores for 8 metrics.
 
-COMPANY DESCRIPTION:
-{company_description}
+RESPOND ONLY WITH VALID JSON in this exact format (no other text):
+{{
+  "files_organized": {{"score": <0-100>, "comment": "<brief reason>"}},
+  "readme": {{"score": <0-100>, "comment": "<brief reason>"}},
+  "error_handling": {{"score": <0-100>, "comment": "<brief reason>"}},
+  "comments": {{"score": <0-100>, "comment": "<brief reason>"}},
+  "dependencies": {{"score": <0-100>, "comment": "<brief reason>"}},
+  "commit_lines": {{"score": <0-100>, "comment": "<brief reason>"}},
+  "solves_real_problem": {{"score": <0-100>, "comment": "<brief reason>"}},
+  "aligns_company": {{"score": <0-100>, "comment": "<brief reason>"}}
+}}
 
-PROJECT DETAILS:
-README: {readme_content if readme_content else "No README"}
-Languages used: {sorted(languages)}
-Dependencies: {dependencies[:30]}
-File structure sample: {tree[:30]}
+Score guidelines: 0-20=Very poor, 21-40=Poor, 41-60=Average, 61-80=Good, 81-100=Excellent
+Keep each comment under 150 chars.
 
-Evaluate:
-1. Does the tech stack match what the company uses?
-2. Does the project domain relate to the company's industry?
-3. Do the skills demonstrated align with the job requirements?
-4. Would this project experience be relevant to the role?"""
+================================================================================
+REPOSITORY CONTEXT
+================================================================================
 
-    return await call_gemini(prompt)
+### FILE ORGANIZATION
+Top-level directories: {sorted(top_level)}
+Directory structure sample: {sorted(list(all_dirs)[:25])}
+Total files: {len(tree)}
+Sample paths: {tree[:40]}
+
+### README
+{readme_content if readme_content else "No README found"}
+
+### ERROR HANDLING SAMPLES
+{chr(10).join(error_snippets[:4]) if error_snippets else "No try/catch patterns found"}
+
+### COMMENT SAMPLES
+{chr(10).join(comment_samples[:5]) if comment_samples else "No comments found"}
+
+### DEPENDENCIES
+Count: {len(dependencies)}, Density: {dep_density:.2f} per 1000 LOC
+List: {dependencies[:40]}
+Dep files: {list(dep_file_content.keys())}
+{chr(10).join(f'=== {k} ===\n{v[:1500]}' for k, v in list(dep_file_content.items())[:2])}
+
+### COMMIT MESSAGES
+Total: {len(messages)}, Low-signal: {low_signal_count}
+{chr(10).join(f"- {msg[:80]}" for msg in messages[:20])}
+
+### REAL PROBLEM INDICATORS
+Real-world signs: {real_indicators if real_indicators else "None"}
+Tutorial signs: {tutorial_matches if tutorial_matches else "None"}
+Commit count: {len(commits)}, File count: {len(tree)}, LOC: {loc}
+
+### COMPANY ALIGNMENT
+Company: {company_description}
+Languages: {sorted(languages)}
+Dependencies: {dependencies[:25]}
+
+================================================================================
+EVALUATE THESE 8 METRICS:
+1. files_organized: Clear separation? Logical grouping? Reasonable nesting? Follows conventions?
+2. readme: Explains purpose? Install instructions? Usage examples? Well-formatted?
+3. error_handling: Specific catches? Meaningful handling? Cleanup in finally? Custom exceptions?
+4. comments: Explain WHY not WHAT? Docstrings present? Human-written or AI-generated? Appropriate density?
+5. dependencies: Pinned versions? Reasonable count? Lock file? Dev/prod separated?
+6. commit_lines: Descriptive messages? Conventional format? Human or AI-written? Explains what/why?
+7. solves_real_problem: Real problem or tutorial clone? Production-ready features? Professional quality?
+8. aligns_company: Tech stack match? Domain relevance? Skills alignment? Relevant experience?
+"""
+    
+    return prompt
 
 
 # ============================================================================
@@ -1144,42 +997,46 @@ Evaluate:
 
 async def analyze_repository(repo: dict[str, Any], company_description: Optional[str] = None) -> dict[str, Any]:
     """
-    Run all 14 metric analyses in parallel.
+    Run all 14 metric analyses.
+    - 6 metrics use heuristics (no LLM)
+    - 8 metrics use a single batched LLM call
+    
     Returns dict with all metrics, each containing {"score": 0-100, "comment": "..."}
+    Raises RuntimeError if LLM call fails after retry.
     """
     
-    # Run all analyses in parallel
-    results = await asyncio.gather(
-        analyze_files_organized(repo),
+    # Default company description if not provided
+    if not company_description:
+        company_description = "A technology company building software products. Looking for developers with strong coding skills, clean code practices, and experience with modern development workflows."
+    
+    # Run heuristics-based analyses in parallel
+    heuristic_results = await asyncio.gather(
         analyze_test_suites(repo),
-        analyze_readme(repo),
         analyze_api_keys(repo),
-        analyze_error_handling(repo),
-        analyze_comments(repo),
         analyze_print_or_logging(repo),
-        analyze_dependencies(repo),
         analyze_commit_density(repo),
-        analyze_commit_lines(repo),
         analyze_concurrency(repo),
         analyze_caching(repo),
-        analyze_solves_real_problem(repo),
-        analyze_aligns_company(repo, company_description),
         return_exceptions=True
     )
     
-    # Handle any exceptions
-    metric_names = [
-        "files_organized", "test_suites", "readme", "api_keys",
-        "error_handling", "comments", "print_or_logging", "dependencies",
-        "commit_density", "commit_lines", "concurrency", "caching",
-        "solves_real_problem", "aligns_company"
-    ]
+    heuristic_names = ["test_suites", "api_keys", "print_or_logging", "commit_density", "concurrency", "caching"]
     
+    # Build final results with heuristics
     final_results = {}
-    for name, result in zip(metric_names, results):
+    for name, result in zip(heuristic_names, heuristic_results):
         if isinstance(result, Exception):
             final_results[name] = {"score": 50, "comment": f"Analysis error: {str(result)[:100]}"}
         else:
             final_results[name] = result
+    
+    # Build and execute batched LLM call for remaining 8 metrics
+    prompt = _build_batched_prompt(repo, company_description)
+    
+    # This will raise RuntimeError if both attempts fail
+    llm_results = await call_gemini_batched(prompt, retries=1)
+    
+    # Merge LLM results
+    final_results.update(llm_results)
     
     return final_results
