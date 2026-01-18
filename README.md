@@ -52,6 +52,24 @@ Most founders spend **30 seconds glancing at a GitHub profile**, then rely on "t
 
 ---
 
+## Installation
+
+To get started with the server, you first need to install `uv`.
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then, navigate to the server directory, sync the dependencies, and activate the virtual environment:
+
+```bash
+cd server
+uv sync
+source .venv/bin/activate
+```
+
+---
+
 ## Built for Early-Stage Startups
 
 We get it. You're moving fast, burning runway, and every hire is critical. We've validated this with startup sponsors at hackathons and SMBs who face the same problem.
