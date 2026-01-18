@@ -59,8 +59,11 @@ export const LanguagesDisplay = ({ languages, className }: LanguagesDisplayProps
         {languages.map((lang, index) => (
           <div key={lang.name} className="flex items-center gap-2">
             <span
-              className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: getBarColor(index) }}
+              className={cn(
+                "glyph-spinner text-sm leading-none",
+                index % 2 === 0 ? "text-primary" : "text-foreground"
+              )}
+              aria-hidden="true"
             />
             <span className="text-xs uppercase tracking-wider text-muted-foreground">
               {lang.name}

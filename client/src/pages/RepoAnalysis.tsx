@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
@@ -6,8 +7,15 @@ import { InsightsList, Insight } from "@/components/InsightsList";
 import { RadarChart } from "@/components/RadarChart";
 import { LanguagesDisplay } from "@/components/LanguagesDisplay";
 import { AsciiPanel } from "@/components/AsciiPanel";
+import { ProgressTracker } from "@/components/ProgressTracker";
 
 // Mock repository data - would come from API in real implementation
+type MetricSignal = {
+  label: string;
+  value: string;
+  tone: "good" | "warn" | "bad" | "neutral";
+};
+
 const mockRepoData: Record<string, {
   name: string;
   description: string;
@@ -28,6 +36,19 @@ const mockRepoData: Record<string, {
   strengths: Insight[];
   redFlags: Insight[];
   suggestions: Insight[];
+  metrics: {
+    aiUsage: {
+      score: number;
+      signals: MetricSignal[];
+    };
+    productionReadiness: {
+      score: number;
+      scalability: number;
+      errorHandling: number;
+      signals: MetricSignal[];
+    };
+    aiSuggestions: Insight[];
+  };
 }> = {
   "neural-search-engine": {
     name: "neural-search-engine",
@@ -72,6 +93,30 @@ const mockRepoData: Record<string, {
       { id: "1", type: "hint", text: "Consider adding async support for batch operations" },
       { id: "2", type: "hint", text: "Add benchmarking suite for performance regression testing" },
     ],
+    metrics: {
+      aiUsage: {
+        score: 12,
+        signals: [
+          { label: "AI Comment Markers", value: "0 files", tone: "good" },
+          { label: "LLM Commit Signal", value: "9%", tone: "good" },
+          { label: "Generated Boilerplate", value: "Low", tone: "good" },
+        ],
+      },
+      productionReadiness: {
+        score: 88,
+        scalability: 90,
+        errorHandling: 84,
+        signals: [
+          { label: "Async Pipelines", value: "Present", tone: "good" },
+          { label: "Retries/Fallbacks", value: "Partial", tone: "warn" },
+          { label: "Caching Layer", value: "FAISS + Redis", tone: "good" },
+        ],
+      },
+      aiSuggestions: [
+        { id: "1", type: "hint", text: "Add structured logging to async workers for easier incident triage" },
+        { id: "2", type: "hint", text: "Introduce retry budgets and circuit breakers on embedding fetches" },
+      ],
+    },
   },
   "react-terminal-ui": {
     name: "react-terminal-ui",
@@ -114,6 +159,30 @@ const mockRepoData: Record<string, {
       { id: "1", type: "hint", text: "Consider tree-shaking for smaller bundle size" },
       { id: "2", type: "hint", text: "Add Storybook for component documentation" },
     ],
+    metrics: {
+      aiUsage: {
+        score: 18,
+        signals: [
+          { label: "AI Comment Markers", value: "1 file", tone: "warn" },
+          { label: "LLM Commit Signal", value: "14%", tone: "neutral" },
+          { label: "Generated Boilerplate", value: "Minimal", tone: "good" },
+        ],
+      },
+      productionReadiness: {
+        score: 81,
+        scalability: 78,
+        errorHandling: 86,
+        signals: [
+          { label: "Bundle Splitting", value: "Partial", tone: "warn" },
+          { label: "Error Boundaries", value: "Present", tone: "good" },
+          { label: "Telemetry Hooks", value: "Missing", tone: "bad" },
+        ],
+      },
+      aiSuggestions: [
+        { id: "1", type: "hint", text: "Add error boundary coverage for all interactive widgets" },
+        { id: "2", type: "hint", text: "Ship telemetry hooks for command usage and failure paths" },
+      ],
+    },
   },
   "cloud-infra-toolkit": {
     name: "cloud-infra-toolkit",
@@ -157,6 +226,30 @@ const mockRepoData: Record<string, {
       { id: "1", type: "hint", text: "Add cost estimation features" },
       { id: "2", type: "hint", text: "Consider adding drift detection capabilities" },
     ],
+    metrics: {
+      aiUsage: {
+        score: 6,
+        signals: [
+          { label: "AI Comment Markers", value: "0 files", tone: "good" },
+          { label: "LLM Commit Signal", value: "4%", tone: "good" },
+          { label: "Generated Boilerplate", value: "Low", tone: "good" },
+        ],
+      },
+      productionReadiness: {
+        score: 86,
+        scalability: 92,
+        errorHandling: 79,
+        signals: [
+          { label: "Multi-Region Design", value: "Strong", tone: "good" },
+          { label: "Retry Strategy", value: "Basic", tone: "warn" },
+          { label: "Secrets Hygiene", value: "Good", tone: "good" },
+        ],
+      },
+      aiSuggestions: [
+        { id: "1", type: "hint", text: "Add exponential backoff templates for all cloud providers" },
+        { id: "2", type: "hint", text: "Document failure-mode playbooks per service module" },
+      ],
+    },
   },
   "ml-pipeline-orchestrator": {
     name: "ml-pipeline-orchestrator",
@@ -201,6 +294,30 @@ const mockRepoData: Record<string, {
       { id: "2", type: "hint", text: "Consider implementing circuit breakers" },
       { id: "3", type: "hint", text: "Review and refactor AI-generated sections" },
     ],
+    metrics: {
+      aiUsage: {
+        score: 32,
+        signals: [
+          { label: "AI Comment Markers", value: "4 files", tone: "warn" },
+          { label: "LLM Commit Signal", value: "28%", tone: "warn" },
+          { label: "Generated Boilerplate", value: "Moderate", tone: "neutral" },
+        ],
+      },
+      productionReadiness: {
+        score: 72,
+        scalability: 74,
+        errorHandling: 68,
+        signals: [
+          { label: "Queue Backpressure", value: "Partial", tone: "warn" },
+          { label: "Retry/Fallbacks", value: "Minimal", tone: "bad" },
+          { label: "Model Registry", value: "Present", tone: "good" },
+        ],
+      },
+      aiSuggestions: [
+        { id: "1", type: "hint", text: "Define strict retry policies for job orchestration failures" },
+        { id: "2", type: "hint", text: "Introduce request tracing between pipeline stages" },
+      ],
+    },
   },
   "rust-crypto-lib": {
     name: "rust-crypto-lib",
@@ -241,6 +358,30 @@ const mockRepoData: Record<string, {
     suggestions: [
       { id: "1", type: "hint", text: "Consider WASM compilation for browser support" },
     ],
+    metrics: {
+      aiUsage: {
+        score: 4,
+        signals: [
+          { label: "AI Comment Markers", value: "0 files", tone: "good" },
+          { label: "LLM Commit Signal", value: "2%", tone: "good" },
+          { label: "Generated Boilerplate", value: "None", tone: "good" },
+        ],
+      },
+      productionReadiness: {
+        score: 94,
+        scalability: 92,
+        errorHandling: 96,
+        signals: [
+          { label: "Constant-Time APIs", value: "Verified", tone: "good" },
+          { label: "Fail-Safe Defaults", value: "Strong", tone: "good" },
+          { label: "Fuzzing Coverage", value: "Extensive", tone: "good" },
+        ],
+      },
+      aiSuggestions: [
+        { id: "1", type: "hint", text: "Add performance regression guards for new cipher suites" },
+        { id: "2", type: "hint", text: "Expose structured error enums for integration callers" },
+      ],
+    },
   },
 };
 
@@ -272,148 +413,300 @@ const defaultRepoData = {
   strengths: [],
   redFlags: [],
   suggestions: [],
+  metrics: {
+    aiUsage: {
+      score: 0,
+      signals: [],
+    },
+    productionReadiness: {
+      score: 0,
+      scalability: 0,
+      errorHandling: 0,
+      signals: [],
+    },
+    aiSuggestions: [],
+  },
 };
 
 const RepoAnalysis = () => {
   const { repoId } = useParams<{ repoId: string }>();
   const repo = repoId ? mockRepoData[repoId] || defaultRepoData : defaultRepoData;
+  const [isAnalyzing, setIsAnalyzing] = useState(true);
+  const toneClasses: Record<MetricSignal["tone"], string> = {
+    good: "text-primary",
+    warn: "text-primary/80",
+    bad: "text-foreground",
+    neutral: "text-muted-foreground",
+  };
+
+  useEffect(() => {
+    setIsAnalyzing(true);
+    const timer = setTimeout(() => {
+      setIsAnalyzing(false);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [repoId]);
 
   return (
     <GridBackground>
       <Header />
 
       <main className="container mx-auto px-4 py-12">
-        <div className="animate-fade-in-up">
-          {/* Page Header */}
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <Link
-                  to="/repositories"
-                  className="text-muted-foreground hover:text-foreground transition-colors text-sm"
-                >
-                  ← Repositories
-                </Link>
-                <span className="text-muted-foreground">/</span>
-                <h1 className="text-2xl font-bold text-foreground">
-                  <span className="text-primary text-glow">{repo.name}</span>
-                </h1>
-                {repo.isPrivate && (
-                  <span className="text-[10px] px-1.5 py-0.5 border border-muted text-muted-foreground uppercase tracking-wider">
-                    Private
-                  </span>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground max-w-2xl">
-                {repo.description}
+        {isAnalyzing ? (
+          <div className="flex flex-col items-center justify-center min-h-[70vh] animate-fade-in-up">
+            <div className="text-center mb-8">
+              <h2 className="text-2xl font-bold text-foreground mb-2">
+                Analyzing <span className="text-primary">{repo.name}</span>
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Running deeper metrics and signal checks
               </p>
             </div>
-          </div>
 
-          {/* Quick Stats Bar */}
-          <div className="flex items-center gap-6 mb-6 text-sm">
+            <ProgressTracker className="w-full max-w-md" />
+
+            <Link
+              to="/repositories"
+              className="mt-8 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              ← Back to repositories
+            </Link>
+          </div>
+        ) : (
+          <div className="animate-fade-in-up">
+            {/* Page Header */}
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <Link
+                    to="/repositories"
+                    className="text-muted-foreground hover:text-foreground transition-colors text-sm"
+                  >
+                    ← Repositories
+                  </Link>
+                  <span className="text-muted-foreground">/</span>
+                  <h1 className="text-2xl font-bold text-foreground">
+                    <span className="text-primary text-glow">{repo.name}</span>
+                  </h1>
+                  {repo.isPrivate && (
+                    <span className="text-[10px] px-1.5 py-0.5 border border-muted text-muted-foreground uppercase tracking-wider">
+                      Private
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground max-w-2xl">
+                  {repo.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Stats Bar */}
+            <div className="flex items-center gap-6 mb-6 text-sm">
             <div className="flex items-center gap-1.5">
-              <span
-                className="w-3 h-3 rounded-full"
-                style={{ backgroundColor: repo.languageColor }}
-              />
+              <span className="glyph-spinner text-sm text-primary leading-none" aria-hidden="true" />
               <span className="text-foreground">{repo.language}</span>
             </div>
-            <div className="flex items-center gap-1 text-muted-foreground">
-              <span>★</span>
-              <span>{repo.stars.toLocaleString()}</span>
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <span>★</span>
+                <span>{repo.stars.toLocaleString()}</span>
+              </div>
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <span>⑂</span>
+                <span>{repo.forks.toLocaleString()}</span>
+              </div>
+              <div className="text-muted-foreground">
+                Updated {repo.lastUpdated}
+              </div>
             </div>
-            <div className="flex items-center gap-1 text-muted-foreground">
-              <span>⑂</span>
-              <span>{repo.forks.toLocaleString()}</span>
+
+            {/* Score Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <ScoreDisplay
+                label="Repository Score"
+                value={repo.overallScore}
+              />
+              <ScoreDisplay
+                label="AI Detection"
+                value={repo.aiDetection}
+                suffix="%"
+              />
+              <ScoreDisplay
+                label="Total Commits"
+                value={repo.totalCommits}
+                maxValue={1000}
+              />
             </div>
-            <div className="text-muted-foreground">
-              Updated {repo.lastUpdated}
-            </div>
-          </div>
 
-          {/* Score Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <ScoreDisplay
-              label="Repository Score"
-              value={repo.overallScore}
-            />
-            <ScoreDisplay
-              label="AI Detection"
-              value={repo.aiDetection}
-              suffix="%"
-            />
-            <ScoreDisplay
-              label="Total Commits"
-              value={repo.totalCommits}
-              maxValue={1000}
-            />
-          </div>
+            {/* Languages */}
+            {repo.languages.length > 0 && (
+              <LanguagesDisplay languages={repo.languages} className="mb-6" />
+            )}
 
-          {/* Languages */}
-          {repo.languages.length > 0 && (
-            <LanguagesDisplay languages={repo.languages} className="mb-6" />
-          )}
+            {/* Metrics */}
+            <div className="space-y-4 mb-6">
+              <div className="flex items-center gap-2">
+                <span className="text-primary">▸</span>
+                <h2 className="text-xs uppercase tracking-widest text-muted-foreground">
+                  Metric Breakdown
+                </h2>
+                <div className="flex-1 h-px bg-border ml-2" />
+              </div>
 
-          {/* Main Content Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <AsciiPanel title="AI Usage" variant="highlight">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs uppercase tracking-widest text-muted-foreground">
+                        AI Footprint
+                      </div>
+                      <div className="text-3xl font-bold text-primary tabular-nums">
+                        {repo.metrics.aiUsage.score}%
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground text-right">
+                      Higher means more AI
+                      <br />
+                      usage detected
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-2 text-sm">
+                    {repo.metrics.aiUsage.signals.map((signal) => (
+                      <div key={signal.label} className="flex justify-between">
+                        <span className="text-muted-foreground">{signal.label}</span>
+                        <span className={toneClasses[signal.tone]}>{signal.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </AsciiPanel>
+
+                <AsciiPanel title="Production Readiness">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs uppercase tracking-widest text-muted-foreground">
+                        Overall Score
+                      </div>
+                      <div className="text-3xl font-bold text-primary tabular-nums">
+                        {repo.metrics.productionReadiness.score}
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground text-right">
+                      Scalability +
+                      <br />
+                      Error Handling
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-3 text-sm">
+                    <div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Scalability</span>
+                        <span className="text-foreground tabular-nums">
+                          {repo.metrics.productionReadiness.scalability}/100
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1 bg-muted rounded-sm overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-500 ease-out"
+                          style={{ width: `${repo.metrics.productionReadiness.scalability}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Error Handling</span>
+                        <span className="text-foreground tabular-nums">
+                          {repo.metrics.productionReadiness.errorHandling}/100
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1 bg-muted rounded-sm overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-500 ease-out"
+                          style={{ width: `${repo.metrics.productionReadiness.errorHandling}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-2 text-sm">
+                    {repo.metrics.productionReadiness.signals.map((signal) => (
+                      <div key={signal.label} className="flex justify-between">
+                        <span className="text-muted-foreground">{signal.label}</span>
+                        <span className={toneClasses[signal.tone]}>{signal.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </AsciiPanel>
+              </div>
+
+              {repo.metrics.aiSuggestions.length > 0 && (
                 <InsightsList
-                  title="Strengths"
-                  insights={repo.strengths}
+                  title="AI Suggestions"
+                  insights={repo.metrics.aiSuggestions}
                 />
+              )}
+            </div>
+
+            {/* Main Content Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="lg:col-span-2 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <InsightsList
+                    title="Strengths"
+                    insights={repo.strengths}
+                  />
+                  <InsightsList
+                    title="Red Flags"
+                    insights={repo.redFlags}
+                  />
+                </div>
+
                 <InsightsList
-                  title="Red Flags"
-                  insights={repo.redFlags}
+                  title="Suggestions"
+                  insights={repo.suggestions}
                 />
               </div>
 
-              <InsightsList
-                title="Suggestions"
-                insights={repo.suggestions}
-              />
-            </div>
+              <div>
+                <RadarChart data={repo.radarData} />
 
-            <div>
-              <RadarChart data={repo.radarData} />
+                <AsciiPanel title="Repository Stats" className="mt-4">
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Contributors</span>
+                      <span className="text-foreground font-medium">{repo.contributors}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Open Issues</span>
+                      <span className="text-foreground font-medium">{repo.openIssues}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Pull Requests</span>
+                      <span className="text-foreground font-medium">{repo.pullRequests}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Total Commits</span>
+                      <span className="text-foreground font-medium">{repo.totalCommits.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </AsciiPanel>
 
-              <AsciiPanel title="Repository Stats" className="mt-4">
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Contributors</span>
-                    <span className="text-foreground font-medium">{repo.contributors}</span>
+                <AsciiPanel title="Analysis Info" className="mt-4" variant="muted">
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Analyzed</span>
+                      <span className="text-foreground font-medium">{new Date().toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Analysis Version</span>
+                      <span className="text-foreground font-medium">v2.1.0</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Open Issues</span>
-                    <span className="text-foreground font-medium">{repo.openIssues}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Pull Requests</span>
-                    <span className="text-foreground font-medium">{repo.pullRequests}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Total Commits</span>
-                    <span className="text-foreground font-medium">{repo.totalCommits.toLocaleString()}</span>
-                  </div>
-                </div>
-              </AsciiPanel>
-
-              <AsciiPanel title="Analysis Info" className="mt-4" variant="muted">
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Analyzed</span>
-                    <span className="text-foreground font-medium">{new Date().toLocaleDateString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Analysis Version</span>
-                    <span className="text-foreground font-medium">v2.1.0</span>
-                  </div>
-                </div>
-              </AsciiPanel>
+                </AsciiPanel>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </main>
 
       <footer className="border-t border-border bg-card/30 mt-auto">
