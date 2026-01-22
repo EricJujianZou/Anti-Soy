@@ -11,6 +11,7 @@ export interface Repository {
   forks: number;
   lastUpdated: string;
   isPrivate: boolean;
+  githubLink?: string;
 }
 
 interface RepositoryCardProps {
@@ -20,9 +21,13 @@ interface RepositoryCardProps {
 }
 
 export const RepositoryCard = ({ repository, className, index = 0 }: RepositoryCardProps) => {
+  const linkParams = repository.githubLink
+    ? `?link=${encodeURIComponent(repository.githubLink)}`
+    : '';
+
   return (
     <Link
-      to={`/repo/${repository.id}`}
+      to={`/repo/${repository.id}${linkParams}`}
       className={cn(
         "block relative border border-border bg-card/50 backdrop-blur-sm",
         "hover:border-primary/50 hover:glow-amber transition-all duration-300",

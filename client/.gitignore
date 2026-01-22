@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.vercel
+
+# Env files (Vite)
+.env
+.env.*
+!.env.example

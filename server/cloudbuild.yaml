@@ -1,0 +1,25 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "gcr.io/$PROJECT_ID/anti-soy-backend:$COMMIT_SHA"
+      - "."
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "gcr.io/$PROJECT_ID/anti-soy-backend:$COMMIT_SHA"
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "anti-soy-backend"
+      - "--image"
+      - "gcr.io/$PROJECT_ID/anti-soy-backend:$COMMIT_SHA"
+      - "--region"
+      - "us-east4"
+      - "--platform"
+      - "managed"
+      - "--allow-unauthenticated"
+images:
+  - "gcr.io/$PROJECT_ID/anti-soy-backend:$COMMIT_SHA"

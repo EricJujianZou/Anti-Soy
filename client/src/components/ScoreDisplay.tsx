@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 
 interface ScoreDisplayProps {
   label: string;
-  value: number;
+  value: number | string;
   maxValue?: number;
   suffix?: string;
   size?: "sm" | "lg";
@@ -15,7 +15,8 @@ export const ScoreDisplay = ({
   suffix = "",
   size = "lg"
 }: ScoreDisplayProps) => {
-  const percentage = (value / maxValue) * 100;
+  const isNumeric = typeof value === "number";
+  const percentage = isNumeric ? (value / maxValue) * 100 : 0;
 
   return (
     <div className="relative border border-border bg-card/50 backdrop-blur-sm p-4">
@@ -33,16 +34,18 @@ export const ScoreDisplay = ({
         "font-bold tabular-nums text-primary",
         size === "lg" ? "text-4xl" : "text-2xl"
       )}>
-        {value}{suffix}
+        {value}{isNumeric ? suffix : ""}
       </div>
       
       {/* Progress bar */}
-      <div className="mt-3 h-1 bg-muted rounded-sm overflow-hidden">
-        <div 
-          className="h-full bg-primary transition-all duration-500 ease-out"
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
+      {isNumeric && (
+        <div className="mt-3 h-1 bg-muted rounded-sm overflow-hidden">
+          <div
+            className="h-full bg-primary transition-all duration-500 ease-out"
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 };
