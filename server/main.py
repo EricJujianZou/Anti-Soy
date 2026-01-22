@@ -33,9 +33,11 @@ app = FastAPI()
 
 # Add CORS middleware to allow frontend requests
 ALLOWED_ORIGINS = [
-    "https://ericjujianzhou.github.io",  # GitHub Pages
+    "https://ericjujianzou.github.io",   # GitHub Pages (lowercase)
+    "https://EricJujianZou.github.io",    # GitHub Pages (original case)
     "http://localhost:5173",              # Local Vite dev server
     "http://localhost:3000",              # Alternative local dev
+    "http://localhost:8080",              # Vite on port 8080
 ]
 
 app.add_middleware(
