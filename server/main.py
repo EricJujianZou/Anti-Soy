@@ -1,12 +1,9 @@
 import asyncio
+import asyncio
 import json
 import os
 import subprocess
 import tempfile
-import os
-import json
-import asyncio
-import requests
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -257,12 +254,18 @@ def create_user_metadata(
 
 @app.put("/repo")
 def clone_repo(
+def clone_repo(
     repo: str = Query(..., description="GitHub link to a repository"),
+    company_description: Optional[str] = Query(
+        None, description="Company mission/job description for alignment analysis"
+    ),
     company_description: Optional[str] = Query(
         None, description="Company mission/job description for alignment analysis"
     ),
 ):
     """
+    Analyze a GitHub repository. Clones it, runs analysis functions concurrently,
+    and stores results in repo_data.
     Analyze a GitHub repository. Clones it, runs analysis functions concurrently,
     and stores results in repo_data.
     Link must be in format: https://github.com/username/repo-name
@@ -285,10 +288,47 @@ def clone_repo(
     repo_name = path_parts[1]
     repo_link = f"https://github.com/{username}/{repo_name}"
 
+
     with Session(engine) as session:
+        # Validate repo exists in database
         # Validate repo exists in database
         db_repo = session.query(Repo).filter(Repo.github_link == repo_link).first()
         if not db_repo:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repo not found in database. Run PUT /metadata first for user {username}",
+            )
+
+        # Return existing repo_data if already analyzed
+        if db_repo.repo_data:
+            return {
+                "status": "already_analyzed",
+                "repo_id": db_repo.id,
+                "repo_link": repo_link,
+                "files_organized": db_repo.repo_data.files_organized,
+                "test_suites": db_repo.repo_data.test_suites,
+                "readme": db_repo.repo_data.readme,
+                "api_keys": db_repo.repo_data.api_keys,
+                "error_handling": db_repo.repo_data.error_handling,
+                "comments": db_repo.repo_data.comments,
+                "print_or_logging": db_repo.repo_data.print_or_logging,
+                "dependencies": db_repo.repo_data.dependencies,
+                "commit_density": db_repo.repo_data.commit_density,
+                "commit_lines": db_repo.repo_data.commit_lines,
+                "concurrency": db_repo.repo_data.concurrency,
+                "caching": db_repo.repo_data.caching,
+                "solves_real_problem": db_repo.repo_data.solves_real_problem,
+                "aligns_company": db_repo.repo_data.aligns_company,
+            }
+
+        # Clone and analyze
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = subprocess.run(
+                ["git", "clone", "--depth", "100", repo_link, temp_dir],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
             raise HTTPException(
                 status_code=404,
                 detail=f"Repo not found in database. Run PUT /metadata first for user {username}",
@@ -338,7 +378,35 @@ def clone_repo(
             results = asyncio.run(analyze_repository(repo_data, company_description))
 
             # Create RepoData and store results
+            if result.returncode != 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to clone repository: {result.stderr}",
+                )
+
+            # Extract repo data
+            repo_data = extract_repo_data(temp_dir)
+
+            # Run async analyses synchronously
+            results = asyncio.run(analyze_repository(repo_data, company_description))
+
+            # Create RepoData and store results
             repo_data_entry = RepoData(
+                repo_id=db_repo.id,
+                files_organized=results["files_organized"],
+                test_suites=results["test_suites"],
+                readme=results["readme"],
+                api_keys=results["api_keys"],
+                error_handling=results["error_handling"],
+                comments=results["comments"],
+                print_or_logging=results["print_or_logging"],
+                dependencies=results["dependencies"],
+                commit_density=results["commit_density"],
+                commit_lines=results["commit_lines"],
+                concurrency=results["concurrency"],
+                caching=results["caching"],
+                solves_real_problem=results["solves_real_problem"],
+                aligns_company=results["aligns_company"],
                 repo_id=db_repo.id,
                 files_organized=results["files_organized"],
                 test_suites=results["test_suites"],
@@ -357,11 +425,17 @@ def clone_repo(
             )
             session.add(repo_data_entry)
             session.commit()
+            session.commit()
 
             return {
                 "status": "analyzed",
                 "repo_id": db_repo.id,
                 "repo_link": repo_link,
                 **results,
+                "status": "analyzed",
+                "repo_id": db_repo.id,
+                "repo_link": repo_link,
+                **results,
             }
+
 
