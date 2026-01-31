@@ -249,6 +249,96 @@ Pre-filter with cheap pattern matching:
 
 Only send suspicious comments to LLM for verification (cost control).
 
+
+**What Should be Sent From Client to Frontend**
+```python
+{
+  "repo": {
+    "url": "https://github.com/user/repo",
+    "name": "repo",
+    "owner": "user",
+    "languages": { "Python": 45000, "JavaScript": 12000 },
+    "analyzed_at": "2026-01-30T12:00:00Z"
+  },
+  "verdict": {
+    "type": "Slop Coder",
+    "confidence": 87  // 0-100
+  },
+  "ai_slop": {
+    "score": 65,  // 0-100
+    "confidence": "medium",  // "low" | "medium" | "high"
+    "style_features": {
+      "function_naming_consistency": 0.72,
+      "variable_naming_consistency": 0.65,
+      "class_naming_consistency": 0.80,
+      "constant_naming_consistency": 0.90,
+      "indentation_consistency": 0.95,
+      "avg_function_length": 12.5,
+      "avg_nesting_depth": 2.1,
+      "comment_ratio": 0.28,
+      "avg_function_name_length": 14.2,
+      "avg_variable_name_length": 8.7,
+      "max_function_length": 45,
+      "max_nesting_depth": 4,
+      "docstring_coverage": 0.60,
+      "redundant_comment_count": 3
+    },
+    "negative_ai_signals": [
+      {
+        "type": "redundant_comment",
+        "severity": "warning",
+        "file": "api/users.py",
+        "line": 23,
+        "snippet": "# iterate through the users list\nfor user in users:",
+        "explanation": "Comment restates what the code obviously does"
+      }
+      // ...more findings
+    ],
+    "positive_ai_signals": [
+      {
+        "type": "ai_instruction_file",
+        "file": ".cursorrules",
+        "explanation": "Has AI instruction file — indicates disciplined AI usage"
+      }
+      // ...more findings
+    ]
+  },
+  "bad_practices": {
+    "score": 45,  // 0-100
+    "findings": [
+      {
+        "type": "no_input_validation",
+        "severity": "critical",
+        "file": "api/users.py",
+        "line": 47,
+        "snippet": "def update_user(user_id, data):\n    db.users.update(user_id, data)",
+        "explanation": "User input passed directly to database without validation"
+      }
+      // ...more findings
+    ]
+  },
+  "code_quality": {
+    "score": 72,  // 0-100
+    "findings": [
+      {
+        "type": "god_function",
+        "severity": "warning",
+        "file": "main.py",
+        "line": 120,
+        "snippet": "def process_all_data(...):\n    # 150 lines of code",
+        "explanation": "Function exceeds 100 lines — hard to maintain"
+      }
+      // ...more findings
+    ]
+  },
+  "files_analyzed": [
+    { "path": "main.py", "importance_score": 85, "loc": 245 },
+    { "path": "api/users.py", "importance_score": 78, "loc": 180 }
+    // ...top 10-15 files
+  ]
+}
+
+```
 **Output:**
 
 - AI Slop Score (0-100)
