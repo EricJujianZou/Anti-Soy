@@ -62,6 +62,8 @@ We get it. You're moving fast, burning runway, and every hire is critical. We've
 
 ## Ready to Stop Hiring Soy Devs?
 
+Dockerfile in /server/
+
 **Contact us for a demo**: [e2zou@uwaterloo.ca](mailto:e2zou@uwaterloo.ca)
 
 ---
