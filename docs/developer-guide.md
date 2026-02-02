@@ -17,6 +17,34 @@ Quick reference for local development, testing, and deployment.
 
 ### Backend (FastAPI)
 
+#### Using uv (Recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package manager written in Rust.
+
+```bash
+cd server
+
+# Install uv (if not installed)
+# Windows PowerShell:
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# macOS/Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install dependencies (one command)
+uv sync
+
+# Activate virtual environment
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# macOS/Linux:
+source .venv/bin/activate
+
+# Run development server
+uvicorn main:app --reload --port 8000
+```
+
+#### Using pip (Alternative)
+
 ```bash
 cd server
 
@@ -31,15 +59,10 @@ python -m venv venv
 # macOS/Linux:
 source venv/bin/activate
 
-# Install dependencies
+# Install dependencies in editable mode (-e = editable, changes reflect immediately)
 pip install -e .
-# Or manually:
+# Or install manually:
 pip install fastapi[standard] google-genai pydantic python-dotenv requests sqlalchemy
-
-# Create .env file (copy from example if exists)
-# Required variables:
-#   GEMINI_API_KEY=your_key_here
-#   GITHUB_TOKEN=your_github_pat_here
 
 # Run development server
 uvicorn main:app --reload --port 8000
@@ -68,7 +91,7 @@ npm install
 npm run dev
 ```
 
-**Frontend will be available at:** `http://localhost:5173`
+**Frontend will be available at:** `http://localhost:8080`
 
 ---
 

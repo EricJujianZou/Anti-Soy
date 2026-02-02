@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/utils";
 import { useNavigate } from "react-router-dom";
 
 interface HeaderProps {

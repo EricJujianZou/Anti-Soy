@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/utils";
 import { BarLoader } from "./BarLoader";
 
 export type StepStatus = "pending" | "active" | "complete";
