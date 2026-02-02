@@ -21,7 +21,7 @@ import {
   computeProductionReadinessScore,
   computeScalabilityScore,
   generateAISuggestions,
-} from "@/lib/scoring";
+} from "@/utils/scoring";
 
 type MetricSignal = {
   label: string;
