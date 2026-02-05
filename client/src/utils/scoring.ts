@@ -55,7 +55,7 @@ export function computeOverallScore(analysis: RepoAnalysis): number {
  */
 export function computeRadarData(analysis: RepoAnalysis): RadarDataPoint[] {
   return [
-    { category: "Organization", value: analysis.files_organized.score, fullMark: 100 },
+    { category: "Organization", value: analysis.files_organized.score, fullMark: 100, label: "Organization" },
     { category: "Testing", value: analysis.test_suites.score, fullMark: 100 },
     { category: "Documentation", value: analysis.readme.score, fullMark: 100 },
     { category: "Security", value: analysis.api_keys.score, fullMark: 100 },

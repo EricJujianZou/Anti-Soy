@@ -21,27 +21,28 @@ export const AsciiPanel = ({
   };
 
   return (
-    <div className={cn(
-      "relative border bg-card/50 backdrop-blur-sm",
-      variants[variant],
-      className
-    )}>
-      {/* Corner decorations */}
-      <span className="absolute -top-px -left-px text-primary text-xs">┌</span>
-      <span className="absolute -top-px -right-px text-primary text-xs">┐</span>
-      <span className="absolute -bottom-px -left-px text-primary text-xs">└</span>
-      <span className="absolute -bottom-px -right-px text-primary text-xs">┘</span>
-      
+    <div>
       {title && (
-        <div className="absolute -top-3 left-4 px-2 bg-background">
+        <div className={cn("border px-2 bg-background force-inline-block", variants[variant])}>
           <span className="text-xs text-muted-foreground uppercase tracking-widest">
             {title}
           </span>
         </div>
       )}
-      
-      <div className="p-4">
-        {children}
+      <div className={cn(
+        "relative border bg-card/50 backdrop-blur-sm",
+        variants[variant],
+        className
+      )}>
+        {/* Corner decorations */}
+        <span className="absolute -top-px -left-px text-primary text-xs">┌</span>
+        <span className="absolute -top-px -right-px text-primary text-xs">┐</span>
+        <span className="absolute -bottom-px -left-px text-primary text-xs">└</span>
+        <span className="absolute -bottom-px -right-px text-primary text-xs">┘</span>
+        
+        <div className="p-4">
+          {children}
+        </div>
       </div>
     </div>
   );
