@@ -250,4 +250,8 @@
   .animate-grid-move {
     animation: gridMove 3s linear infinite;
   }
+
+  .force-inline-block {
+    display: inline-block
+  }
 }

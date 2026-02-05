@@ -12,9 +12,11 @@ interface RadarChartProps {
 }
 
 export const RadarChart = ({ data, className }: RadarChartProps) => {
-  const size = 220;
-  const center = size / 2;
-  const maxRadius = size / 2 - 40;
+  const sizeX = 250;
+  const sizeY = 220;
+  const centerX = sizeX / 2;
+  const centerY = sizeY / 2;
+  const maxRadius = ((sizeX < sizeY) ? sizeX : sizeY) / 2 - 40;
   const levels = 4;
 
   const angleStep = (2 * Math.PI) / data.length;
@@ -26,8 +28,8 @@ export const RadarChart = ({ data, className }: RadarChartProps) => {
     return (
       <circle
         key={`grid-${i}`}
-        cx={center}
-        cy={center}
+        cx={centerX}
+        cy={centerY}
         r={radius}
         fill="none"
         stroke="hsl(var(--border))"
@@ -40,13 +42,13 @@ export const RadarChart = ({ data, className }: RadarChartProps) => {
   // Generate axis lines
   const axisLines = data.map((_, index) => {
     const angle = startAngle + index * angleStep;
-    const x2 = center + maxRadius * Math.cos(angle);
-    const y2 = center + maxRadius * Math.sin(angle);
+    const x2 = centerX + maxRadius * Math.cos(angle);
+    const y2 = centerY + maxRadius * Math.sin(angle);
     return (
       <line
         key={`axis-${index}`}
-        x1={center}
-        y1={center}
+        x1={centerX}
+        y1={centerY}
         x2={x2}
         y2={y2}
         stroke="hsl(var(--border))"
@@ -60,8 +62,8 @@ export const RadarChart = ({ data, className }: RadarChartProps) => {
     const angle = startAngle + index * angleStep;
     const normalizedValue = point.value / (point.maxValue || 100);
     const radius = maxRadius * normalizedValue;
-    const x = center + radius * Math.cos(angle);
-    const y = center + radius * Math.sin(angle);
+    const x = centerX + radius * Math.cos(angle);
+    const y = centerY + radius * Math.sin(angle);
     return `${x},${y}`;
   }).join(" ");
 
@@ -69,11 +71,11 @@ export const RadarChart = ({ data, className }: RadarChartProps) => {
   const labels = data.map((point, index) => {
     const angle = startAngle + index * angleStep;
     const labelRadius = maxRadius + 25;
-    const x = center + labelRadius * Math.cos(angle);
-    const y = center + labelRadius * Math.sin(angle);
+    const x = centerX + labelRadius * Math.cos(angle);
+    const y = centerY + labelRadius * Math.sin(angle);
     
     // Abbreviate long labels
-    const displayLabel = point.label.length > 8 ? point.label.slice(0, 7) + "." : point.label;
+    const displayLabel = point.category;
     
     return (
       <text
@@ -108,7 +110,7 @@ export const RadarChart = ({ data, className }: RadarChartProps) => {
       </div>
       
       <div className="flex justify-center">
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <svg width={sizeX} height={sizeY} viewBox={`0 0 ${sizeX} ${sizeY}`}>
           {gridCircles}
           {axisLines}
           <polygon
@@ -123,8 +125,8 @@ export const RadarChart = ({ data, className }: RadarChartProps) => {
             const angle = startAngle + index * angleStep;
             const normalizedValue = point.value / (point.maxValue || 100);
             const radius = maxRadius * normalizedValue;
-            const x = center + radius * Math.cos(angle);
-            const y = center + radius * Math.sin(angle);
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
             return (
               <circle
                 key={`point-${index}`}
