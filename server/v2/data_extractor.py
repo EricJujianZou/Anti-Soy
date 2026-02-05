@@ -30,6 +30,29 @@ CODE_EXTENSIONS = (
     ".sql", ".sh", ".bash",                 # SQL, Shell
 )
 
+# Test file indicators
+TEST_INDICATORS = (
+    'test_', '_test.', '.test.', '.spec.',
+    '/tests/', '/test/', '/__tests__/',
+    'conftest.py', 'pytest', 'unittest',
+)
+
+
+# =============================================================================
+# SHARED HELPER FUNCTIONS
+# =============================================================================
+
+def is_code_file(file_path: str) -> bool:
+    """Check if file is a code file based on extension."""
+    return file_path.endswith(CODE_EXTENSIONS)
+
+
+def is_test_file(file_path: str) -> bool:
+    """Check if file is a test file based on path patterns."""
+    file_lower = file_path.lower()
+    return any(indicator in file_lower for indicator in TEST_INDICATORS)
+
+
 # Config/doc files we also want to read (for analysis)
 INCLUDE_FILES = (
     ".gitignore", ".env", ".env.example", ".env.local",
