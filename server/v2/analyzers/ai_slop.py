@@ -28,7 +28,7 @@ from ..schemas import (
 )
 from ..feature_extractor import ExtractedFeatures, features_to_dict
 from ..classifier import get_classifier, ClassifierResult
-from ..data_extractor import RepoData
+from ..data_extractor import RepoData, is_code_file
 
 
 # =============================================================================
@@ -223,7 +223,7 @@ class AISlopAnalyzer:
         
         for file_path, content in repo_data.files.items():
             # Skip non-code files
-            if not self._is_code_file(file_path):
+            if not is_code_file(file_path):
                 continue
             
             # Choose patterns based on file type
@@ -423,16 +423,6 @@ class AISlopAnalyzer:
             )
             for f in redundant_findings
         ]
-    
-    def _is_code_file(self, file_path: str) -> bool:
-        """Check if file is a code file we should analyze."""
-        code_extensions = (
-            '.py', '.js', '.ts', '.jsx', '.tsx',
-            '.java', '.go', '.rb', '.rs',
-            '.cpp', '.c', '.cs', '.h', '.hpp',
-            '.php', '.swift', '.kt', '.scala',
-        )
-        return file_path.endswith(code_extensions)
 
 
 # =============================================================================
