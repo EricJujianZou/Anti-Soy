@@ -76,7 +76,10 @@ class RepoData(Base):
     
     # Interview Questions (generated on demand)
     interview_questions = Column(Text)  # JSON: List of InterviewQuestion objects
-
+    
+    # Project Evaluation (LLM-powered, from /evaluate endpoint)
+    project_evaluation = Column(Text)  # JSON: BusinessValue object (solves_real_problem, project_type, etc.)
+    
     # Relationship
     repo = relationship("Repo", back_populates="repo_data")
 

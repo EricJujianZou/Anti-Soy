@@ -150,7 +150,7 @@ class CodeQualityAnalyzer:
         Checks for:
         - Proper directory structure (src/, tests/, etc.)
         - Not too many files in root
-        - No god files (> 500 LOC)
+        - No god files (> 1000 LOC)
         """
         findings: list[Finding] = []
         score = 100
@@ -209,13 +209,13 @@ class CodeQualityAnalyzer:
                 explanation="No common project structure patterns detected (src/, tests/, lib/, etc.). Consider organizing code into logical directories.",
             ))
         
-        # Check for god files (> 500 LOC)
+        # Check for god files (> 1000 LOC)
         for file_path, content in repo_data.files.items():
             if not is_code_file(file_path):
                 continue
             
             loc = len(content.split("\n"))
-            if loc > 500:
+            if loc > 1000:
                 score -= 10
                 findings.append(Finding(
                     type="god_file",
