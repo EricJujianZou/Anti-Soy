@@ -241,12 +241,15 @@ class AISlopAnalyzer:
                     # Find line number
                     line_start = content[:match.start()].count('\n') + 1
                     
-                    # Extract snippet (the matching text)
-                    snippet = match.group(0).strip()
+                    # Extract snippet (current line + 3 full lines after)
+                    lines = content.split('\n')
+                    snippet_start = max(0, line_start - 1)
+                    snippet_end = min(len(lines), line_start + 4)  # +4 = current line + 3 after
+                    snippet = '\n'.join(lines[snippet_start:snippet_end])
                     
-                    # Limit snippet length
-                    if len(snippet) > 200:
-                        snippet = snippet[:200] + "..."
+                    # Limit snippet length but preserve full lines
+                    if len(snippet) > 500:
+                        snippet = snippet[:500] + "..."
                     
                     findings.append(RedundantCommentFinding(
                         file_path=file_path,
@@ -411,18 +414,47 @@ class AISlopAnalyzer:
         self,
         redundant_findings: list[RedundantCommentFinding],
     ) -> list[Finding]:
-        """Convert internal findings to schema Finding objects."""
-        return [
-            Finding(
+        """
+        Convert internal findings to schema Finding objects.
+        
+        Aggregates redundant comments by explanation type:
+        - Groups findings with same explanation together
+        - Uses first occurrence's file and line
+        - Snippet shows all occurrences (file:line format)
+        """
+        if not redundant_findings:
+            return []
+        
+        # Group by explanation type
+        grouped: dict[str, list[RedundantCommentFinding]] = {}
+        for f in redundant_findings:
+            if f.explanation not in grouped:
+                grouped[f.explanation] = []
+            grouped[f.explanation].append(f)
+        
+        # Convert each group to a single aggregated Finding
+        findings: list[Finding] = []
+        for explanation, group in grouped.items():
+            # First occurrence provides file and line
+            first = group[0]
+            
+            # Build snippet with all occurrences (max 5 shown)
+            occurrences = [f"{f.file_path}:{f.line_number}" for f in group]
+            snippet_parts = occurrences[:5]
+            snippet = ', '.join(snippet_parts)
+            if len(occurrences) > 5:
+                snippet += f" ... and {len(occurrences) - 5} more"
+            
+            findings.append(Finding(
                 type="redundant_comment",
                 severity=Severity.WARNING,
-                file=f.file_path,
-                line=f.line_number,
-                snippet=f.snippet,
-                explanation=f.explanation,
-            )
-            for f in redundant_findings
-        ]
+                file=f"Multiple files, first occurrence at {first.file_path}",
+                line=first.line_number,
+                snippet=snippet,
+                explanation=f"{explanation} (found {len(group)} occurrences)",
+            ))
+        
+        return findings
 
 
 # =============================================================================

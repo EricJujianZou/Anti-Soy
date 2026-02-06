@@ -27,12 +27,12 @@ from ..data_extractor import RepoData, is_code_file, is_test_file
 
 # Score weights for different severity levels
 SEVERITY_WEIGHTS = {
-    Severity.CRITICAL: 15,
-    Severity.WARNING: 8,
-    Severity.INFO: 3,
+    Severity.CRITICAL: 60,
+    Severity.WARNING: 20,
+    Severity.INFO: 5,
 }
 
-# Maximum score (100 = very bad practices)
+# Maximum score (100 = very bad practices, capped)
 MAX_SCORE = 100
 
 
@@ -227,23 +227,8 @@ HYGIENE_PATTERNS = [
     # .env file committed (check tree, not content)
     # This is handled specially, not via regex
     
-    # Print statements in production code (not test files)
-    DetectionPattern(
-        name="print_statement",
-        category="hygiene",
-        severity=Severity.INFO,
-        pattern=r'''^\s*print\s*\(''',
-        file_pattern="*.py",
-        explanation="Print statement in code - use proper logging for production.",
-    ),
-    DetectionPattern(
-        name="console_log",
-        category="hygiene",
-        severity=Severity.INFO,
-        pattern=r'''^\s*console\.log\s*\(''',
-        file_pattern="*.{js,ts,jsx,tsx}",
-        explanation="console.log in code - use proper logging for production.",
-    ),
+    # NOTE: Print statements are handled separately via _check_print_statements()
+    # to aggregate them instead of creating individual findings
     
     # Commented-out code blocks
     DetectionPattern(
@@ -328,6 +313,7 @@ class BadPracticesAnalyzer:
         # Check for special cases (not regex-based)
         findings.extend(self._check_env_committed(repo_data))
         findings.extend(self._check_gitignore_issues(repo_data))
+        findings.extend(self._check_print_statements(repo_data))
         
         # Count by category
         security_count = sum(1 for f in findings if self._get_category(f.type) == "security")
@@ -379,15 +365,15 @@ class BadPracticesAnalyzer:
                 # Get line number
                 line_number = content[:match.start()].count('\n') + 1
                 
-                # Get snippet (the line plus maybe one line of context)
+                # Get snippet (the line plus 3 full lines after for context)
                 lines = content.split('\n')
                 snippet_start = max(0, line_number - 1)
-                snippet_end = min(len(lines), line_number + 2)
+                snippet_end = min(len(lines), line_number + 4)  # +4 = current line + 3 after
                 snippet = '\n'.join(lines[snippet_start:snippet_end])
                 
-                # Truncate long snippets
-                if len(snippet) > 300:
-                    snippet = snippet[:300] + "..."
+                # Truncate very long snippets but preserve full lines
+                if len(snippet) > 500:
+                    snippet = snippet[:500] + "..."
                 
                 findings.append(Finding(
                     type=pattern.name,
@@ -397,6 +383,63 @@ class BadPracticesAnalyzer:
                     snippet=snippet,
                     explanation=pattern.explanation,
                 ))
+        
+        return findings
+    
+    def _check_print_statements(self, repo_data: RepoData) -> list[Finding]:
+        """
+        Check for print/console.log statements and aggregate them.
+        
+        Instead of individual findings per print statement, creates one
+        aggregated finding with count and examples.
+        """
+        findings: list[Finding] = []
+        print_occurrences: list[str] = []  # "file:line" format
+        
+        for file_path, content in repo_data.files.items():
+            # Skip test files
+            if is_test_file(file_path):
+                continue
+            
+            lines = content.split('\n')
+            
+            # Python print statements
+            if file_path.endswith('.py'):
+                for i, line in enumerate(lines):
+                    stripped = line.strip()
+                    if stripped.startswith('#'):
+                        continue
+                    if re.match(r'^\s*print\s*\(', line):
+                        print_occurrences.append(f"{file_path}:{i+1}")
+            
+            # JavaScript/TypeScript console.log
+            elif file_path.endswith(('.js', '.ts', '.jsx', '.tsx')):
+                for i, line in enumerate(lines):
+                    stripped = line.strip()
+                    if stripped.startswith('//'):
+                        continue
+                    if 'console.log(' in line:
+                        print_occurrences.append(f"{file_path}:{i+1}")
+        
+        # Only create finding if there are print statements
+        if len(print_occurrences) >= 3:  # Threshold: 3+ to flag
+            # Parse first occurrence for file and line
+            first_file, first_line = print_occurrences[0].rsplit(':', 1)
+            
+            # Take first 3 examples for snippet
+            examples = print_occurrences[:3]
+            examples_str = ', '.join(examples)
+            if len(print_occurrences) > 3:
+                examples_str += f" ... and {len(print_occurrences) - 3} more"
+            
+            findings.append(Finding(
+                type="print_statements",
+                severity=Severity.INFO,
+                file=f"Multiple files, first occurrence at {first_file}",
+                line=int(first_line),
+                snippet=examples_str,
+                explanation=f"Found {len(print_occurrences)} print/console.log statements across the codebase. Consider using proper logging for production.",
+            ))
         
         return findings
     
