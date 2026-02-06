@@ -748,18 +748,29 @@ class CodeQualityAnalyzer:
                 elif unpinned_count == 0 and dep_lines:
                     score += 10  # All pinned bonus
         
-        # Check dependency count (too many = complexity)
+        # Check dependency count relative to codebase size
         dep_count = len(repo_data.dependencies)
-        if dep_count > 50:
+        
+        # Calculate total lines of code
+        total_loc = sum(
+            len(content.split('\n'))
+            for path, content in repo_data.files.items()
+            if is_code_file(path)
+        )
+        
+        if dep_count > 0 and total_loc > 0:
+            # Calculate deps per 1000 LOC
+            deps_per_1k_loc = (dep_count / total_loc) * 1000
+            
+            # Report as info (no score penalty)
             findings.append(Finding(
-                type="many_dependencies",
+                type="dependency_ratio",
                 severity=Severity.INFO,
-                file=found_dep_files[0],
+                file=found_dep_files[0] if found_dep_files else "(project)",
                 line=1,
-                snippet=f"{dep_count} dependencies",
-                explanation=f"Large number of dependencies ({dep_count}). Consider if all are necessary.",
+                snippet=f"{dep_count} dependencies for {total_loc:,} LOC ({deps_per_1k_loc:.1f} deps per 1,000 LOC)",
+                explanation=f"Dependency ratio: {deps_per_1k_loc:.1f} dependencies per 1,000 lines of code. This is informational - larger codebases naturally need more dependencies.",
             ))
-            score -= 10
         
         return max(0, min(100, score)), findings
 
