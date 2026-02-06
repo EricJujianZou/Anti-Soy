@@ -5,19 +5,26 @@ Main FastAPI application with endpoints for repository analysis.
 """
 
 import json
+import logging
 import os
+import re
 import subprocess
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
-
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from models import Base, User, Repo, RepoData
 
@@ -30,9 +37,10 @@ from v2.schemas import (
     AnalysisResponse,
     RepoInfo,
     Verdict,
-    InterviewQuestionsRequest,
-    InterviewQuestionsResponse,
     InterviewQuestion,
+    EvaluateRequest,
+    EvaluateResponse,
+    BusinessValue,
 )
 
 load_dotenv()
@@ -53,6 +61,19 @@ app = FastAPI(
     version="2.0.0",
 )
 
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please try again later."},
+    )
+
+
 # CORS middleware
 ALLOWED_ORIGINS = [
     "https://ericjujianzou.github.io",
@@ -66,8 +87,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -136,21 +157,20 @@ def compute_verdict(ai_score: int, bad_practices_score: int, quality_score: int)
 # =============================================================================
 
 def parse_repo_url(repo_url: str) -> tuple[str, str]:
-    """Parse GitHub repo URL and return (username, repo_name)."""
-    parsed = urlparse(repo_url)
-    
-    if parsed.netloc != "github.com":
-        raise HTTPException(status_code=400, detail="Invalid GitHub URL. Must be github.com")
-    
-    path_parts = [p for p in parsed.path.split("/") if p]
-    
-    if len(path_parts) < 2:
+    """Parse and validate GitHub repo URL. Returns (username, repo_name)."""
+    repo_url = repo_url.strip().rstrip("/")
+    # Remove .git suffix if present
+    if repo_url.endswith(".git"):
+        repo_url = repo_url[:-4]
+
+    match = re.match(r"^https://github\.com/([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)$", repo_url)
+    if not match:
         raise HTTPException(
             status_code=400,
-            detail="Invalid repo URL. Must be https://github.com/username/repo-name"
+            detail="Invalid GitHub URL. Must be https://github.com/username/repo-name",
         )
-    
-    return path_parts[0], path_parts[1]
+
+    return match.group(1), match.group(2)
 
 
 def get_or_create_user(session: Session, username: str) -> User:
@@ -224,7 +244,8 @@ def read_root():
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
-def analyze_repo(request: AnalyzeRequest):
+@limiter.limit("10/minute")
+def analyze_repo(request: AnalyzeRequest, http_request: Request):
     """
     Analyze a GitHub repository.
     
@@ -256,9 +277,10 @@ def analyze_repo(request: AnalyzeRequest):
             )
             
             if result.returncode != 0:
+                logger.error(f"Clone failed for {repo_url}: {result.stderr}")
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Failed to clone repository: {result.stderr}",
+                    detail="Failed to clone repository. Please check the URL and try again.",
                 )
             
             # Extract repo data
@@ -316,11 +338,20 @@ def analyze_repo(request: AnalyzeRequest):
             return build_analysis_response(repo, repo_data_entry)
 
 
-@app.post("/interview-questions", response_model=InterviewQuestionsResponse)
-def generate_interview_questions(request: InterviewQuestionsRequest):
+@app.post("/evaluate", response_model=EvaluateResponse)
+@limiter.limit("20/minute")
+def evaluate_repo(request: EvaluateRequest, http_request: Request):
     """
-    Generate interview questions based on analysis findings.
-    Uses Gemini LLM to create targeted questions.
+    Evaluate a repository's business value and generate comprehensive interview questions.
+    
+    This endpoint uses an LLM to:
+    1. Assess if the project solves a real problem
+    2. Classify the project type
+    3. Generate a summary for hiring managers
+    4. Create interview questions covering business value, design choices, and code issues
+    
+    Requires: Repository must have been analyzed first via /analyze.
+    Results are cached in the database.
     """
     from google import genai
     
@@ -335,118 +366,203 @@ def generate_interview_questions(request: InterviewQuestionsRequest):
             raise HTTPException(status_code=404, detail="Repository not found")
         
         if not repo.repo_data:
-            raise HTTPException(status_code=400, detail="Repository has not been analyzed yet")
+            raise HTTPException(status_code=400, detail="Repository has not been analyzed yet. Call /analyze first.")
         
-        # Check if questions already generated
-        if repo.repo_data.interview_questions:
-            questions = json.loads(repo.repo_data.interview_questions)
-            return InterviewQuestionsResponse(
+        # Check if evaluation already exists
+        if repo.repo_data.project_evaluation:
+            cached_data = json.loads(repo.repo_data.project_evaluation)
+            return EvaluateResponse(
                 repo_id=repo.id,
                 repo_url=repo.github_link,
-                questions=[InterviewQuestion(**q) for q in questions],
+                business_value=BusinessValue(**cached_data["business_value"]),
+                standout_features=cached_data.get("standout_features", []),
+                interview_questions=[InterviewQuestion(**q) for q in cached_data["interview_questions"]],
             )
         
-        # Gather findings for prompt
-        ai_slop_data = json.loads(repo.repo_data.ai_slop_data) if repo.repo_data.ai_slop_data else {}
+        # Gather context for LLM
         bad_practices_data = json.loads(repo.repo_data.bad_practices_data) if repo.repo_data.bad_practices_data else {}
         code_quality_data = json.loads(repo.repo_data.code_quality_data) if repo.repo_data.code_quality_data else {}
-        
-        findings_summary = []
-        
-        for finding in ai_slop_data.get("negative_ai_signals", [])[:5]:
-            findings_summary.append({
-                "category": "AI Slop",
-                "type": finding.get("type"),
-                "file": finding.get("file"),
-                "line": finding.get("line"),
-                "snippet": finding.get("snippet", "")[:200],
-                "explanation": finding.get("explanation"),
-            })
-        
+        files_analyzed = json.loads(repo.repo_data.files_analyzed) if repo.repo_data.files_analyzed else []
+
+        # Build findings with full context (exclude AI slop — useful for scoring, not interviews)
+        findings_context = []
+
         for finding in bad_practices_data.get("findings", [])[:5]:
-            findings_summary.append({
-                "category": "Bad Practices",
+            findings_context.append({
+                "category": "Bad Practice",
                 "type": finding.get("type"),
+                "severity": finding.get("severity"),
                 "file": finding.get("file"),
                 "line": finding.get("line"),
-                "snippet": finding.get("snippet", "")[:200],
+                "snippet": (finding.get("snippet") or "")[:300],
                 "explanation": finding.get("explanation"),
             })
-        
+
         for finding in code_quality_data.get("findings", [])[:5]:
-            findings_summary.append({
+            findings_context.append({
                 "category": "Code Quality",
                 "type": finding.get("type"),
+                "severity": finding.get("severity"),
                 "file": finding.get("file"),
                 "line": finding.get("line"),
-                "snippet": finding.get("snippet", "")[:200],
+                "snippet": (finding.get("snippet") or "")[:300],
                 "explanation": finding.get("explanation"),
             })
-        
-        if not findings_summary:
-            return InterviewQuestionsResponse(
-                repo_id=repo.id,
-                repo_url=repo.github_link,
-                questions=[],
-            )
-        
-        prompt = f"""You are a technical interviewer reviewing a candidate's GitHub repository.
-Based on the following code analysis findings, generate 3-5 interview questions that:
-1. Reference the specific code snippet or pattern found
-2. Probe whether the candidate understands WHY this is a problem
-3. Test if they know the correct approach
 
-Repository: {repo.github_link}
-Verdict: {repo.repo_data.verdict_type}
+        # Build file tree summary (top 10 important files)
+        file_tree = [f["path"] for f in files_analyzed[:10]]
 
-Findings:
-{json.dumps(findings_summary, indent=2)}
+        prompt = f"""You are a senior technical interviewer. You're about to interview a candidate about a GitHub project they built. Your job is to generate interview questions that sound natural — like a real person across the table — while being specifically grounded in what you see in their code.
 
-Generate questions in this JSON format:
-[
-  {{
-    "question": "The specific question to ask",
-    "based_on": "Brief reference to the finding (e.g., 'SQL injection in auth.py:45')",
-    "probes": "What skill/knowledge this tests (e.g., 'sql_injection_prevention')"
-  }}
-]
+REPOSITORY INFO:
+- URL: {repo.github_link}
+- Name: {repo.repo_name}
+- Analysis Verdict: {repo.repo_data.verdict_type} (confidence: {repo.repo_data.verdict_confidence}%)
+- AI Slop Score: {repo.repo_data.ai_slop_score}/100 (higher = more AI-generated)
+- Bad Practices Score: {repo.repo_data.bad_practices_score}/100 (higher = worse)
+- Code Quality Score: {repo.repo_data.code_quality_score}/100 (higher = better)
 
-Return ONLY the JSON array, no other text."""
+FILE STRUCTURE:
+{json.dumps(file_tree, indent=2)}
+
+CODE FINDINGS (with file locations and code snippets):
+{json.dumps(findings_context, indent=2)}
+
+INSTRUCTIONS FOR GENERATING QUESTIONS:
+
+1. Focus only on what is UNIQUE, IMPRESSIVE, or UNUSUAL about this project and its issues. Ignore generic findings.
+2. Questions must require the candidate to EXPLAIN THEIR OWN CODE — not recite textbook answers. The candidate should need to have actually written and understood the code to answer well.
+3. Focus on DESIGN CHOICES and ARCHITECTURE — "why did you build it this way?" not "do you know the right way?"
+4. Do NOT reference specific file paths or line numbers in the question text. Ask naturally, like a human interviewer who has reviewed their code.
+5. Do NOT ask about AI-generated code signals, emojis, or redundant comments.
+
+GOOD QUESTION EXAMPLE:
+"Walk me through how authentication works in your API — specifically, how do you make sure a user is authorized before they can modify data?"
+(This is grounded in a real finding — no auth check before DB writes — but asked naturally.)
+
+BAD QUESTION EXAMPLE:
+"Why do you have print statements instead of proper logging?"
+(This is generic and can be answered by anyone who has read a Python best practices blog.)
+
+Respond with a JSON object containing THREE parts:
+
+{{
+  "business_value": {{
+    "solves_real_problem": true/false,
+    "project_type": "real_problem" | "tutorial" | "portfolio_demo" | "learning_exercise" | "utility_tool",
+    "project_description": "One sentence describing what this project does",
+    "originality_assessment": "Is this novel or just another to-do app? What makes it unique or generic?",
+    "project_summary": "2-3 sentence executive summary for a hiring manager"
+  }},
+  "standout_features": [
+    "Short punchy headline about something genuinely impressive"
+  ],
+  "interview_questions": [
+    {{
+      "question": "Natural interview question (no file:line references)",
+      "based_on": "Which finding this is grounded in",
+      "probes": "What skill this tests (e.g., 'security_awareness', 'system_design')",
+      "category": "business_value" | "design_choice" | "code_issue" | "technical_depth"
+    }}
+  ]
+}}
+
+STANDOUT FEATURES INSTRUCTIONS:
+- Return 0-3 short headlines. Most projects will have ZERO — return [] if nothing genuinely stands out.
+- The bar is VERY HIGH. Compare against what's common: GPT wrappers, to-do apps, CRUD APIs, tutorial clones, portfolio demos, summary tools, productivity dashboards, chat apps, weather apps, e-commerce templates.
+- Only include things that would make a startup founder say "this person built something real."
+- Categories to consider (in order of importance):
+  1. SOLVES A REAL USER PROBLEM (most weight): The project addresses a genuine need that isn't already solved by 100 other tools. Evidence of actual users or deployment is a strong signal.
+  2. UNUSUAL TECH CHOICES: Not "uses React" — more like "built custom consensus protocol" or "implemented their own query optimizer."
+  3. BEYOND-MVP ENGINEERING: Not basic error handling or rate limiting — advanced patterns like custom caching strategies, observability pipelines, zero-downtime deployment, sophisticated auth systems.
+- Each headline: 1 short punchy sentence max. Written for a busy founder scanning resumes.
+
+Generate 3-5 interview questions with a mix of categories. At least 1 business_value, 1 design_choice, and 1 code_issue questions.
+
+Return ONLY the JSON object, no other text or markdown formatting."""
 
         client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
-        
-        try:
-            response_text = response.text.strip()
-            if response_text.startswith("```"):
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-            questions_data = json.loads(response_text)
-        except (json.JSONDecodeError, IndexError) as e:
+
+        # Retry up to 2 total attempts with 30s timeout each
+        evaluation_data = None
+        last_error = None
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                    config={"http_options": {"timeout": 30_000}},
+                )
+
+                response_text = response.text.strip()
+                # Handle markdown code blocks
+                if response_text.startswith("```"):
+                    response_text = response_text.split("```")[1]
+                    if response_text.startswith("json"):
+                        response_text = response_text[4:]
+                evaluation_data = json.loads(response_text)
+                break
+            except (json.JSONDecodeError, IndexError) as e:
+                last_error = e
+                logger.warning(f"Gemini parse error (attempt {attempt + 1}/2): {e}")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Gemini API error (attempt {attempt + 1}/2): {e}")
+
+            if attempt < 1:
+                time.sleep(1)
+
+        if evaluation_data is None:
+            logger.error(f"Gemini failed after 2 attempts for repo {repo.id}: {last_error}")
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to parse LLM response: {str(e)}"
+                status_code=503,
+                detail="Evaluation service temporarily unavailable. Please try again.",
             )
         
-        questions = []
-        for q in questions_data[:5]:
-            questions.append(InterviewQuestion(
-                question=q.get("question", ""),
-                based_on=q.get("based_on", ""),
-                probes=q.get("probes", ""),
-            ))
-        
-        repo.repo_data.interview_questions = json.dumps([q.model_dump() for q in questions])
+        # Validate and build response objects
+        try:
+            business_value = BusinessValue(
+                solves_real_problem=evaluation_data["business_value"]["solves_real_problem"],
+                project_type=evaluation_data["business_value"]["project_type"],
+                project_description=evaluation_data["business_value"]["project_description"],
+                originality_assessment=evaluation_data["business_value"]["originality_assessment"],
+                project_summary=evaluation_data["business_value"]["project_summary"],
+            )
+            
+            standout_features = [
+                str(f) for f in evaluation_data.get("standout_features", [])[:3]
+            ]
+
+            questions = []
+            for q in evaluation_data.get("interview_questions", [])[:7]:
+                questions.append(InterviewQuestion(
+                    question=q.get("question", ""),
+                    based_on=q.get("based_on", ""),
+                    probes=q.get("probes", ""),
+                    category=q.get("category", "technical_depth"),
+                ))
+        except (KeyError, ValueError) as e:
+            logger.error(f"LLM response missing required fields for repo {repo.id}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="Evaluation returned incomplete results. Please try again.",
+            )
+
+        # Cache in database
+        cache_data = {
+            "business_value": business_value.model_dump(),
+            "standout_features": standout_features,
+            "interview_questions": [q.model_dump() for q in questions],
+        }
+        repo.repo_data.project_evaluation = json.dumps(cache_data)
         session.commit()
         
-        return InterviewQuestionsResponse(
+        return EvaluateResponse(
             repo_id=repo.id,
             repo_url=repo.github_link,
-            questions=questions,
+            business_value=business_value,
+            standout_features=standout_features,
+            interview_questions=questions,
         )
 
 

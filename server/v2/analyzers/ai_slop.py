@@ -49,6 +49,36 @@ AVG_VAR_NAME_LENGTH_MEDIUM = 12
 AVG_FUNC_NAME_LENGTH_HIGH = 20  # Above this suggests AI verbose naming
 AVG_FUNC_NAME_LENGTH_MEDIUM = 15
 
+# Emoji detection
+# Common emojis found in AI-generated code (Copilot, ChatGPT, etc.)
+# These are a strong signal of unvetted AI output - real devs don't put 🔥 in their code
+COMMON_EMOJIS = {
+    # Popular "vibe" emojis
+    '🔥', '💀', '😂', '🚀', '✨', '👍', '👎', '💯', '🙏', '❤️',
+    '😊', '😎', '🤔', '🎉', '🎊', '💪', '🤖', '🧠', '💡', '⚡',
+    '✅', '❌', '⭐', '🌟', '💥', '🔧', '🛠️', '📝', '📌', '🎯',
+    '🚨', '⚠️', '💻', '🖥️', '📊', '📈', '🗂️', '📁', '🔒', '🔑',
+    # Commonly used in comments/prints
+    '👀', '🤩', '😍', '🥳', '🤯', '😱', '🤣', '😅', '🙄', '🤷',
+}
+
+# Regex pattern to match any emoji (Unicode emoji ranges)
+# This catches emojis we didn't explicitly list
+EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F600-\U0001F64F"  # emoticons
+    "\U0001F300-\U0001F5FF"  # symbols & pictographs
+    "\U0001F680-\U0001F6FF"  # transport & map
+    "\U0001F1E0-\U0001F1FF"  # flags
+    "\U00002702-\U000027B0"  # dingbats
+    "\U000024C2-\U0001F251"  # misc
+    "]+",
+    flags=re.UNICODE
+)
+
+# Bonus points for emoji detection (deterministic, not ML-based)
+EMOJI_BONUS = 80  # +80 to AI score if ANY emoji found in code
+
 # AI instruction files (positive signal - indicates disciplined AI use)
 AI_INSTRUCTION_FILES = [
     ".cursorrules",
@@ -152,6 +182,16 @@ class RedundantCommentFinding:
     explanation: str
 
 
+@dataclass
+class EmojiFinding:
+    """Internal representation of an emoji found in code."""
+    file_path: str
+    line_number: int
+    emoji: str
+    context: str  # "comment", "print", or "commit"
+    snippet: str
+
+
 class AISlopAnalyzer:
     """
     Analyzes code for AI-generated patterns.
@@ -185,21 +225,25 @@ class AISlopAnalyzer:
         # 2. Detect redundant comments (static patterns)
         redundant_findings = self._detect_redundant_comments(repo_data)
         
-        # 3. Detect positive signals
+        # 3. Detect emojis in code (comments, prints, commit messages)
+        emoji_findings = self._detect_emojis(repo_data)
+        
+        # 4. Detect positive signals
         positive_signals = self._detect_positive_signals(repo_data)
         
-        # 4. Calculate final score (0-100)
+        # 5. Calculate final score (0-100)
         score, confidence = self._calculate_score(
             classifier_result,
             features,
             len(redundant_findings),
+            has_emojis=len(emoji_findings) > 0,
         )
         
-        # 5. Build StyleFeatures from extracted features
+        # 6. Build StyleFeatures from extracted features
         style_features = self._build_style_features(features, len(redundant_findings))
         
-        # 6. Convert redundant findings to Finding objects
-        negative_signals = self._convert_to_findings(redundant_findings)
+        # 7. Convert findings to Finding objects
+        negative_signals = self._convert_to_findings(redundant_findings, emoji_findings)
         
         return AISlop(
             score=score,
@@ -260,6 +304,71 @@ class AISlopAnalyzer:
         
         return findings
     
+    def _detect_emojis(self, repo_data: RepoData) -> list[EmojiFinding]:
+        """
+        Detect emojis in code comments, print statements, and commit messages.
+        
+        Emojis in code are a strong signal of unvetted AI-generated content.
+        Real developers don't put 🔥 and 🚀 in their comments.
+        
+        Returns:
+            List of EmojiFinding with file, line, emoji, context, snippet
+        """
+        findings: list[EmojiFinding] = []
+        
+        # 1. Check code files for emojis in comments and print statements
+        for file_path, content in repo_data.files.items():
+            if not is_code_file(file_path):
+                continue
+            
+            lines = content.split('\n')
+            for line_num, line in enumerate(lines, 1):
+                # Check for emojis using our pattern
+                emojis_found = EMOJI_PATTERN.findall(line)
+                if not emojis_found:
+                    # Also check for common emojis in our set (some might not match regex)
+                    emojis_found = [e for e in COMMON_EMOJIS if e in line]
+                
+                if emojis_found:
+                    # Determine context (comment or print)
+                    stripped = line.strip()
+                    if stripped.startswith('#') or stripped.startswith('//') or stripped.startswith('/*'):
+                        context = "comment"
+                    elif 'print' in line.lower() or 'console.log' in line.lower() or 'logger' in line.lower():
+                        context = "print/log"
+                    else:
+                        context = "code"
+                    
+                    # Build snippet (current line + 2 lines after for context)
+                    snippet_start = line_num - 1
+                    snippet_end = min(len(lines), line_num + 2)
+                    snippet = '\n'.join(lines[snippet_start:snippet_end])
+                    
+                    findings.append(EmojiFinding(
+                        file_path=file_path,
+                        line_number=line_num,
+                        emoji=emojis_found[0],  # Store first emoji found
+                        context=context,
+                        snippet=snippet[:300] if len(snippet) > 300 else snippet,
+                    ))
+        
+        # 2. Check commit messages for emojis
+        for commit in repo_data.commits:
+            emojis_found = EMOJI_PATTERN.findall(commit.message)
+            if not emojis_found:
+                emojis_found = [e for e in COMMON_EMOJIS if e in commit.message]
+            
+            if emojis_found:
+                findings.append(EmojiFinding(
+                    file_path="[commit]",
+                    line_number=0,
+                    emoji=emojis_found[0],
+                    context="commit",
+                    snippet=f"{commit.hash[:7]}: {commit.message[:100]}",
+                ))
+        
+        return findings
+    
     def _detect_positive_signals(self, repo_data: RepoData) -> list[PositiveSignal]:
         """
         Detect positive signals that indicate disciplined AI usage or manual coding.
@@ -300,6 +409,7 @@ class AISlopAnalyzer:
         classifier_result: ClassifierResult,
         features: ExtractedFeatures,
         redundant_count: int,
+        has_emojis: bool = False,
     ) -> tuple[int, Confidence]:
         """
         Calculate final AI slop score (0-100) and confidence.
@@ -307,6 +417,7 @@ class AISlopAnalyzer:
         Formula:
         - 40% from ML classifier probability
         - 60% from heuristic signals (comment_ratio, name lengths, redundant count)
+        - +80 bonus if ANY emoji found (deterministic, capped at 100)
         
         Positive signals are reported but don't affect score (per user requirement).
         
@@ -368,6 +479,12 @@ class AISlopAnalyzer:
         # Combine scores
         total_score = ml_score + heuristic_score
         
+        # Emoji bonus: +80 if ANY emoji found (deterministic signal)
+        # This is applied AFTER combining ML + heuristics to ensure it dominates
+        if has_emojis:
+            total_score += EMOJI_BONUS
+            heuristic_signals += 1  # Count as a signal for confidence
+        
         # Clamp to 0-100
         final_score = max(0, min(100, int(round(total_score))))
         
@@ -413,45 +530,80 @@ class AISlopAnalyzer:
     def _convert_to_findings(
         self,
         redundant_findings: list[RedundantCommentFinding],
+        emoji_findings: list[EmojiFinding],
     ) -> list[Finding]:
         """
         Convert internal findings to schema Finding objects.
         
-        Aggregates redundant comments by explanation type:
-        - Groups findings with same explanation together
-        - Uses first occurrence's file and line
-        - Snippet shows all occurrences (file:line format)
+        Aggregates findings:
+        - Redundant comments grouped by explanation type
+        - Emojis grouped into single finding with all occurrences
         """
-        if not redundant_findings:
-            return []
-        
-        # Group by explanation type
-        grouped: dict[str, list[RedundantCommentFinding]] = {}
-        for f in redundant_findings:
-            if f.explanation not in grouped:
-                grouped[f.explanation] = []
-            grouped[f.explanation].append(f)
-        
-        # Convert each group to a single aggregated Finding
         findings: list[Finding] = []
-        for explanation, group in grouped.items():
-            # First occurrence provides file and line
-            first = group[0]
+        
+        # 1. Handle redundant comments (group by explanation type)
+        if redundant_findings:
+            grouped: dict[str, list[RedundantCommentFinding]] = {}
+            for f in redundant_findings:
+                if f.explanation not in grouped:
+                    grouped[f.explanation] = []
+                grouped[f.explanation].append(f)
             
-            # Build snippet with all occurrences (max 5 shown)
-            occurrences = [f"{f.file_path}:{f.line_number}" for f in group]
-            snippet_parts = occurrences[:5]
-            snippet = ', '.join(snippet_parts)
-            if len(occurrences) > 5:
-                snippet += f" ... and {len(occurrences) - 5} more"
+            for explanation, group in grouped.items():
+                first = group[0]
+                occurrences = [f"{f.file_path}:{f.line_number}" for f in group]
+                snippet_parts = occurrences[:5]
+                snippet = ', '.join(snippet_parts)
+                if len(occurrences) > 5:
+                    snippet += f" ... and {len(occurrences) - 5} more"
+                
+                findings.append(Finding(
+                    type="redundant_comment",
+                    severity=Severity.WARNING,
+                    file=f"Multiple files, first occurrence at {first.file_path}",
+                    line=first.line_number,
+                    snippet=snippet,
+                    explanation=f"{explanation} (found {len(group)} occurrences)",
+                ))
+        
+        # 2. Handle emojis (aggregate all into single finding)
+        if emoji_findings:
+            first = emoji_findings[0]
+            
+            # Group by context for the explanation
+            contexts: dict[str, int] = {}
+            unique_emojis: set[str] = set()
+            for f in emoji_findings:
+                contexts[f.context] = contexts.get(f.context, 0) + 1
+                unique_emojis.add(f.emoji)
+            
+            # Build snippet showing occurrences (max 5)
+            occurrences = [
+                f"{f.file_path}:{f.line_number} ({f.emoji})" 
+                if f.context != "commit" 
+                else f"commit {f.snippet[:40]}... ({f.emoji})"
+                for f in emoji_findings[:5]
+            ]
+            snippet = '\n'.join(occurrences)
+            if len(emoji_findings) > 5:
+                snippet += f"\n... and {len(emoji_findings) - 5} more"
+            
+            # Build context summary
+            context_parts = [f"{count} in {ctx}" for ctx, count in contexts.items()]
+            context_summary = ', '.join(context_parts)
+            
+            # Show unique emojis found
+            emoji_display = ' '.join(sorted(unique_emojis)[:10])
+            if len(unique_emojis) > 10:
+                emoji_display += f" ... and {len(unique_emojis) - 10} more"
             
             findings.append(Finding(
-                type="redundant_comment",
-                severity=Severity.WARNING,
-                file=f"Multiple files, first occurrence at {first.file_path}",
-                line=first.line_number,
+                type="emoji_in_code",
+                severity=Severity.CRITICAL,  # Strong AI signal
+                file=f"Multiple locations, first at {first.file_path}" if first.context != "commit" else "[commit messages]",
+                line=first.line_number if first.context != "commit" else 0,
                 snippet=snippet,
-                explanation=f"{explanation} (found {len(group)} occurrences)",
+                explanation=f"Emojis found in code: {emoji_display}. Distribution: {context_summary}. Total: {len(emoji_findings)} occurrences. Real developers don't put 🔥 and 🚀 in production code.",
             ))
         
         return findings

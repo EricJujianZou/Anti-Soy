@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS repo_data (
     -- Interview Questions (generated on demand)
     interview_questions TEXT,  -- JSON: List of InterviewQuestion objects
     
+    -- Project Evaluation (LLM-powered, from /evaluate endpoint)
+    project_evaluation TEXT,  -- JSON: BusinessValue object (solves_real_problem, project_type, etc.)
+    
     FOREIGN KEY (repo_id) REFERENCES repos(id) ON DELETE CASCADE
 );
 

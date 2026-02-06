@@ -189,18 +189,10 @@ class InterviewQuestion(BaseModel):
     question: str = Field(..., description="The interview question to ask")
     based_on: str = Field(..., description="Reference to the finding that prompted this question")
     probes: str = Field(..., description="What skill/knowledge this question probes (e.g., 'input_validation', 'defensive_coding')")
-
-
-class InterviewQuestionsRequest(BaseModel):
-    """Request body for POST /interview-questions endpoint"""
-    repo_id: int = Field(..., description="ID of the repo to generate questions for")
-
-
-class InterviewQuestionsResponse(BaseModel):
-    """Response for POST /interview-questions endpoint"""
-    repo_id: int = Field(..., description="ID of the repo")
-    repo_url: str = Field(..., description="URL of the repo")
-    questions: list[InterviewQuestion] = Field(default_factory=list, description="Generated interview questions")
+    category: str = Field(
+        default="technical_depth",
+        description="Category: 'business_value', 'design_choice', 'code_issue', or 'technical_depth'"
+    )
 
 
 # =============================================================================
@@ -210,3 +202,59 @@ class InterviewQuestionsResponse(BaseModel):
 class AnalyzeRequest(BaseModel):
     """Request body for POST /analyze endpoint"""
     repo_url: str = Field(..., description="Full GitHub URL to analyze (e.g., https://github.com/user/repo)")
+
+
+# =============================================================================
+# PROJECT EVALUATION ENDPOINT (LLM-POWERED)
+# =============================================================================
+
+class BusinessValue(BaseModel):
+    """
+    LLM-generated assessment of the project's business value and originality.
+    This is the "soft" evaluation that requires understanding context.
+    """
+    solves_real_problem: bool = Field(
+        ..., 
+        description="Does this project solve an actual problem someone would pay for or use?"
+    )
+    project_type: Literal["real_problem", "tutorial", "portfolio_demo", "learning_exercise", "utility_tool"] = Field(
+        ...,
+        description="Classification of what kind of project this is"
+    )
+    project_description: str = Field(
+        ...,
+        description="One-sentence description of what the project does"
+    )
+    originality_assessment: str = Field(
+        ...,
+        description="Is this a novel approach or just another to-do app? What makes it unique or unoriginal?"
+    )
+    project_summary: str = Field(
+        ...,
+        description="2-3 sentence executive summary for a hiring manager"
+    )
+
+
+class EvaluateRequest(BaseModel):
+    """Request body for POST /evaluate endpoint"""
+    repo_id: int = Field(..., description="ID of the repo to evaluate (must have been analyzed first)")
+
+
+class EvaluateResponse(BaseModel):
+    """
+    Response for POST /evaluate endpoint.
+    
+    Combines LLM-generated business value assessment with interview questions
+    that probe both code issues AND business understanding.
+    """
+    repo_id: int = Field(..., description="ID of the evaluated repo")
+    repo_url: str = Field(..., description="URL of the repo")
+    business_value: BusinessValue = Field(..., description="LLM assessment of project value and originality")
+    standout_features: list[str] = Field(
+        default_factory=list,
+        description="0-3 punchy headlines of what's genuinely impressive about this project (empty if nothing stands out)"
+    )
+    interview_questions: list[InterviewQuestion] = Field(
+        default_factory=list,
+        description="5-7 interview questions covering business_value, design_choice, code_issue, and technical_depth"
+    )
