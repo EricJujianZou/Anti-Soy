@@ -77,8 +77,8 @@ const RepoAnalysis = () => {
             <p className="text-muted-foreground mt-2 mb-4">
               Please go back and select a repository to analyze.
             </p>
-            <Link to="/repositories" className="text-primary hover:underline">
-              ← Back to repositories
+            <Link to="/" className="text-primary hover:underline">
+              ← Back to home
             </Link>
           </div>
         </main>
