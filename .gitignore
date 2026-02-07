@@ -363,3 +363,8 @@ yarn.lock
 *.njsproj
 *.sln
 *.sw?
+
+# SQLite database files
+*.db
+*.db-wal
+*.db-shm

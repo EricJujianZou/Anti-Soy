@@ -21,12 +21,13 @@ from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-from models import Base, User, Repo, RepoData
+from models import Base, User, Repo, RepoAnalysis, RepoEvaluation
 
 # V2 imports
 from v2.data_extractor import extract_repo_data
@@ -49,8 +50,21 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "database.db"
 engine = create_engine(
-    f"sqlite:///{DATABASE_PATH}", connect_args={"check_same_thread": False}
+    f"sqlite:///{DATABASE_PATH}",
+    connect_args={
+        "check_same_thread": False,
+        "timeout": 30,  # Wait up to 30 seconds for lock to be released
+    },
+    pool_pre_ping=True,  # Verify connections before using
+    pool_size=5,  # Connection pool size
+    max_overflow=10,  # Allow up to 10 additional connections
 )
+
+# Enable WAL mode for better concurrency
+with engine.connect() as conn:
+    conn.execute(text("PRAGMA journal_mode=WAL"))
+    conn.execute(text("PRAGMA busy_timeout=30000"))  # 30 second timeout
+    conn.commit()
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -174,57 +188,71 @@ def parse_repo_url(repo_url: str) -> tuple[str, str]:
 
 
 def get_or_create_user(session: Session, username: str) -> User:
-    """Get existing user or create new one."""
+    """Get existing user or create new one. Handles concurrent inserts."""
     user = session.query(User).filter(User.username == username).first()
-    
+
     if not user:
-        user = User(
-            username=username,
-            github_link=f"https://github.com/{username}",
-        )
-        session.add(user)
-        session.flush()
-    
+        try:
+            user = User(
+                username=username,
+                github_link=f"https://github.com/{username}",
+            )
+            session.add(user)
+            session.flush()
+        except IntegrityError:
+            # Another concurrent request created it - rollback and query again
+            session.rollback()
+            user = session.query(User).filter(User.username == username).first()
+            if not user:
+                raise  # Re-raise if still not found (shouldn't happen)
+
     return user
 
 
 def get_or_create_repo(session: Session, user: User, repo_url: str, repo_name: str) -> Repo:
-    """Get existing repo or create new one."""
+    """Get existing repo or create new one. Handles concurrent inserts."""
     repo = session.query(Repo).filter(Repo.github_link == repo_url).first()
-    
+
     if not repo:
-        repo = Repo(
-            user_id=user.id,
-            github_link=repo_url,
-            repo_name=repo_name,
-            stars=0,
-            languages="{}",
-        )
-        session.add(repo)
-        session.flush()
-    
+        try:
+            repo = Repo(
+                user_id=user.id,
+                github_link=repo_url,
+                repo_name=repo_name,
+                stars=0,
+                languages="{}",
+            )
+            session.add(repo)
+            session.flush()
+        except IntegrityError:
+            # Another concurrent request created it - rollback and query again
+            session.rollback()
+            repo = session.query(Repo).filter(Repo.github_link == repo_url).first()
+            if not repo:
+                raise  # Re-raise if still not found (shouldn't happen)
+
     return repo
 
 
-def build_analysis_response(repo: Repo, repo_data_entry: RepoData) -> AnalysisResponse:
+def build_analysis_response(repo: Repo, repo_analysis: RepoAnalysis) -> AnalysisResponse:
     """Build AnalysisResponse from database entry."""
-    ai_slop_data = json.loads(repo_data_entry.ai_slop_data) if repo_data_entry.ai_slop_data else {}
-    bad_practices_data = json.loads(repo_data_entry.bad_practices_data) if repo_data_entry.bad_practices_data else {}
-    code_quality_data = json.loads(repo_data_entry.code_quality_data) if repo_data_entry.code_quality_data else {}
-    files_analyzed = json.loads(repo_data_entry.files_analyzed) if repo_data_entry.files_analyzed else []
+    ai_slop_data = json.loads(repo_analysis.ai_slop_data)
+    bad_practices_data = json.loads(repo_analysis.bad_practices_data)
+    code_quality_data = json.loads(repo_analysis.code_quality_data)
+    files_analyzed = json.loads(repo_analysis.files_analyzed)
     languages = json.loads(repo.languages) if repo.languages else {}
-    
+
     return AnalysisResponse(
         repo=RepoInfo(
             url=repo.github_link,
             name=repo.repo_name,
             owner=repo.user.username,
             languages=languages,
-            analyzed_at=repo_data_entry.analyzed_at,
+            analyzed_at=repo_analysis.analyzed_at,
         ),
         verdict=Verdict(
-            type=repo_data_entry.verdict_type,
-            confidence=repo_data_entry.verdict_confidence,
+            type=repo_analysis.verdict_type,
+            confidence=repo_analysis.verdict_confidence,
         ),
         ai_slop=ai_slop_data,
         bad_practices=bad_practices_data,
@@ -245,34 +273,38 @@ def read_root():
 
 @app.post("/analyze", response_model=AnalysisResponse)
 @limiter.limit("10/minute")
-def analyze_repo(request: AnalyzeRequest, http_request: Request):
+def analyze_repo(request: Request, body: AnalyzeRequest):
     """
     Analyze a GitHub repository.
-    
+
     Clones the repo, runs all three analyzers, computes verdict,
     and stores results in database.
-    
+
     Returns cached results if repo was already analyzed.
     """
     # Parse and validate URL
-    username, repo_name = parse_repo_url(request.repo_url)
+    username, repo_name = parse_repo_url(body.repo_url)
     repo_url = f"https://github.com/{username}/{repo_name}"
     
     with Session(engine) as session:
         # Get or create user and repo
         user = get_or_create_user(session, username)
         repo = get_or_create_repo(session, user, repo_url, repo_name)
-        
+        session.commit()  # Commit early to release write lock before long-running operations
+        session.refresh(repo)  # Reload repo with relationships after commit
+
         # Check if already analyzed
-        if repo.repo_data:
-            return build_analysis_response(repo, repo.repo_data)
-        
+        if repo.repo_analysis:
+            return build_analysis_response(repo, repo.repo_analysis)
+
         # Clone repository
         with tempfile.TemporaryDirectory() as temp_dir:
             result = subprocess.run(
                 ["git", "clone", "--depth", "100", repo_url, temp_dir],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='ignore',  # Ignore Unicode decode errors
                 timeout=120,
             )
             
@@ -316,7 +348,7 @@ def analyze_repo(request: AnalyzeRequest, http_request: Request):
             ]
             
             # Store in database
-            repo_data_entry = RepoData(
+            repo_analysis = RepoAnalysis(
                 repo_id=repo.id,
                 analyzed_at=datetime.utcnow(),
                 verdict_type=verdict.type,
@@ -330,97 +362,111 @@ def analyze_repo(request: AnalyzeRequest, http_request: Request):
                 code_quality_data=code_quality_result.model_dump_json(),
                 files_analyzed=json.dumps(files_analyzed),
             )
-            session.add(repo_data_entry)
+            session.add(repo_analysis)
             session.commit()
-            session.refresh(repo_data_entry)
+            session.refresh(repo_analysis)
             session.refresh(repo)
-            
-            return build_analysis_response(repo, repo_data_entry)
+
+            return build_analysis_response(repo, repo_analysis)
 
 
 @app.post("/evaluate", response_model=EvaluateResponse)
 @limiter.limit("20/minute")
-def evaluate_repo(request: EvaluateRequest, http_request: Request):
+def evaluate_repo(request: Request, body: EvaluateRequest):
     """
     Evaluate a repository's business value and generate comprehensive interview questions.
-    
+    This is a self-contained endpoint that clones, analyzes, and evaluates.
+
     This endpoint uses an LLM to:
     1. Assess if the project solves a real problem
     2. Classify the project type
     3. Generate a summary for hiring managers
     4. Create interview questions covering business value, design choices, and code issues
-    
-    Requires: Repository must have been analyzed first via /analyze.
+
     Results are cached in the database.
     """
     from google import genai
-    
+
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
-    
+
+    # 1. Parse URL and set up database session
+    username, repo_name = parse_repo_url(body.repo_url)
+    repo_url = f"https://github.com/{username}/{repo_name}"
+
     with Session(engine) as session:
-        repo = session.query(Repo).filter(Repo.id == request.repo_id).first()
-        
-        if not repo:
-            raise HTTPException(status_code=404, detail="Repository not found")
-        
-        if not repo.repo_data:
-            raise HTTPException(status_code=400, detail="Repository has not been analyzed yet. Call /analyze first.")
-        
-        # Check if evaluation already exists
-        if repo.repo_data.project_evaluation:
-            cached_data = json.loads(repo.repo_data.project_evaluation)
+        user = get_or_create_user(session, username)
+        repo = get_or_create_repo(session, user, repo_url, repo_name)
+        session.commit()  # Commit early to release write lock before long-running operations
+        session.refresh(repo)  # Reload repo with relationships after commit
+
+        # 2. Check for cached evaluation
+        if repo.repo_evaluation:
             return EvaluateResponse(
                 repo_id=repo.id,
                 repo_url=repo.github_link,
-                business_value=BusinessValue(**cached_data["business_value"]),
-                standout_features=cached_data.get("standout_features", []),
-                interview_questions=[InterviewQuestion(**q) for q in cached_data["interview_questions"]],
+                is_rejected=bool(repo.repo_evaluation.is_rejected),
+                rejection_reason=repo.repo_evaluation.rejection_reason,
+                business_value=BusinessValue(**json.loads(repo.repo_evaluation.business_value)),
+                standout_features=json.loads(repo.repo_evaluation.standout_features),
+                interview_questions=[InterviewQuestion(**q) for q in json.loads(repo.repo_evaluation.interview_questions)],
             )
+
+        # 3. Clone and Analyze (if no cached result)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = subprocess.run(
+                ["git", "clone", "--depth", "100", repo_url, temp_dir],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',  # Ignore Unicode decode errors
+                timeout=120,
+            )
+            if result.returncode != 0:
+                logger.error(f"Clone failed for {repo_url}: {result.stderr}")
+                raise HTTPException(status_code=500, detail="Failed to clone repository.")
+
+            extracted_data = extract_repo_data(temp_dir)
+            features = extract_features(extracted_data)
+            
+            # Run analyzers
+            ai_slop_result = analyze_ai_slop(extracted_data, features)
+            bad_practices_result = analyze_bad_practices(extracted_data)
+            code_quality_result = analyze_code_quality(extracted_data)
+
+        # 4. Determine Rejection Status (tentative - will be finalized after LLM call)
+        critical_security_issue = None
+        for finding in bad_practices_result.findings:
+            if finding.severity == "critical":
+                critical_security_issue = finding.explanation
+                break
         
-        # Gather context for LLM
-        bad_practices_data = json.loads(repo.repo_data.bad_practices_data) if repo.repo_data.bad_practices_data else {}
-        code_quality_data = json.loads(repo.repo_data.code_quality_data) if repo.repo_data.code_quality_data else {}
-        files_analyzed = json.loads(repo.repo_data.files_analyzed) if repo.repo_data.files_analyzed else []
-
-        # Build findings with full context (exclude AI slop — useful for scoring, not interviews)
+        # 5. Gather context for LLM
         findings_context = []
-
-        for finding in bad_practices_data.get("findings", [])[:5]:
+        for finding in bad_practices_result.findings[:5]:
             findings_context.append({
-                "category": "Bad Practice",
-                "type": finding.get("type"),
-                "severity": finding.get("severity"),
-                "file": finding.get("file"),
-                "line": finding.get("line"),
-                "snippet": (finding.get("snippet") or "")[:300],
-                "explanation": finding.get("explanation"),
+                "category": "Bad Practice", "type": finding.type, "severity": finding.severity,
+                "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
+                "explanation": finding.explanation,
+            })
+        for finding in code_quality_result.findings[:5]:
+             findings_context.append({
+                "category": "Code Quality", "type": finding.type, "severity": finding.severity,
+                "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
+                "explanation": finding.explanation,
             })
 
-        for finding in code_quality_data.get("findings", [])[:5]:
-            findings_context.append({
-                "category": "Code Quality",
-                "type": finding.get("type"),
-                "severity": finding.get("severity"),
-                "file": finding.get("file"),
-                "line": finding.get("line"),
-                "snippet": (finding.get("snippet") or "")[:300],
-                "explanation": finding.get("explanation"),
-            })
-
-        # Build file tree summary (top 10 important files)
-        file_tree = [f["path"] for f in files_analyzed[:10]]
+        file_tree = [path for path, score in sorted(extracted_data.file_importance.items(), key=lambda x: x[1], reverse=True)[:10]]
 
         prompt = f"""You are a senior technical interviewer. You're about to interview a candidate about a GitHub project they built. Your job is to generate interview questions that sound natural — like a real person across the table — while being specifically grounded in what you see in their code.
 
 REPOSITORY INFO:
-- URL: {repo.github_link}
-- Name: {repo.repo_name}
-- Analysis Verdict: {repo.repo_data.verdict_type} (confidence: {repo.repo_data.verdict_confidence}%)
-- AI Slop Score: {repo.repo_data.ai_slop_score}/100 (higher = more AI-generated)
-- Bad Practices Score: {repo.repo_data.bad_practices_score}/100 (higher = worse)
-- Code Quality Score: {repo.repo_data.code_quality_score}/100 (higher = better)
+- URL: {repo_url}
+- Name: {repo_name}
+- AI Slop Score: {ai_slop_result.score}/100 (higher = more AI-generated)
+- Bad Practices Score: {bad_practices_result.score}/100 (higher = worse)
+- Code Quality Score: {code_quality_result.score}/100 (higher = better)
 
 FILE STRUCTURE:
 {json.dumps(file_tree, indent=2)}
@@ -480,10 +526,9 @@ STANDOUT FEATURES INSTRUCTIONS:
 Generate 3-5 interview questions with a mix of categories. At least 1 business_value, 1 design_choice, and 1 code_issue questions.
 
 Return ONLY the JSON object, no other text or markdown formatting."""
-
+        
+        # 6. Call LLM
         client = genai.Client(api_key=GEMINI_API_KEY)
-
-        # Retry up to 2 total attempts with 30s timeout each
         evaluation_data = None
         last_error = None
         for attempt in range(2):
@@ -493,73 +538,62 @@ Return ONLY the JSON object, no other text or markdown formatting."""
                     contents=prompt,
                     config={"http_options": {"timeout": 30_000}},
                 )
-
-                response_text = response.text.strip()
-                # Handle markdown code blocks
-                if response_text.startswith("```"):
-                    response_text = response_text.split("```")[1]
-                    if response_text.startswith("json"):
-                        response_text = response_text[4:]
+                response_text = response.text.strip().replace("```json", "").replace("```", "")
                 evaluation_data = json.loads(response_text)
                 break
-            except (json.JSONDecodeError, IndexError) as e:
+            except (json.JSONDecodeError, IndexError, Exception) as e:
                 last_error = e
-                logger.warning(f"Gemini parse error (attempt {attempt + 1}/2): {e}")
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Gemini API error (attempt {attempt + 1}/2): {e}")
-
-            if attempt < 1:
+                logger.warning(f"Gemini error (attempt {attempt + 1}/2): {e}")
                 time.sleep(1)
 
         if evaluation_data is None:
             logger.error(f"Gemini failed after 2 attempts for repo {repo.id}: {last_error}")
-            raise HTTPException(
-                status_code=503,
-                detail="Evaluation service temporarily unavailable. Please try again.",
-            )
-        
-        # Validate and build response objects
-        try:
-            business_value = BusinessValue(
-                solves_real_problem=evaluation_data["business_value"]["solves_real_problem"],
-                project_type=evaluation_data["business_value"]["project_type"],
-                project_description=evaluation_data["business_value"]["project_description"],
-                originality_assessment=evaluation_data["business_value"]["originality_assessment"],
-                project_summary=evaluation_data["business_value"]["project_summary"],
-            )
-            
-            standout_features = [
-                str(f) for f in evaluation_data.get("standout_features", [])[:3]
-            ]
+            raise HTTPException(status_code=503, detail="Evaluation service temporarily unavailable.")
 
-            questions = []
-            for q in evaluation_data.get("interview_questions", [])[:7]:
-                questions.append(InterviewQuestion(
-                    question=q.get("question", ""),
-                    based_on=q.get("based_on", ""),
-                    probes=q.get("probes", ""),
-                    category=q.get("category", "technical_depth"),
-                ))
+        # 7. Validate and build response
+        try:
+            business_value = BusinessValue(**evaluation_data["business_value"])
+            standout_features = [str(f) for f in evaluation_data.get("standout_features", [])[:3]]
+            questions = [InterviewQuestion(**q) for q in evaluation_data.get("interview_questions", [])[:7]]
         except (KeyError, ValueError) as e:
             logger.error(f"LLM response missing required fields for repo {repo.id}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail="Evaluation returned incomplete results. Please try again.",
-            )
+            raise HTTPException(status_code=500, detail="Evaluation returned incomplete results.")
 
-        # Cache in database
-        cache_data = {
-            "business_value": business_value.model_dump(),
-            "standout_features": standout_features,
-            "interview_questions": [q.model_dump() for q in questions],
-        }
-        repo.repo_data.project_evaluation = json.dumps(cache_data)
+        # 8. Finalize rejection logic
+        is_rejected = False
+        rejection_reason = None
+
+        if standout_features:
+            # If something stands out, never reject (even if critical issues or AI slop)
+            is_rejected = False
+            rejection_reason = None
+        else:
+            # Nothing stands out - check for rejection criteria
+            if critical_security_issue:
+                is_rejected = True
+                rejection_reason = f"Critical Security Issue: {critical_security_issue}"
+            elif ai_slop_result.score == 100:
+                is_rejected = True
+                rejection_reason = "AI-generated code and nothing stands out"
+
+        # 9. Store in database and return
+        repo_evaluation = RepoEvaluation(
+            repo_id=repo.id,
+            evaluated_at=datetime.utcnow(),
+            is_rejected=1 if is_rejected else 0,
+            rejection_reason=rejection_reason,
+            business_value=json.dumps(business_value.model_dump()),
+            standout_features=json.dumps(standout_features),
+            interview_questions=json.dumps([q.model_dump() for q in questions]),
+        )
+        session.add(repo_evaluation)
         session.commit()
-        
+
         return EvaluateResponse(
             repo_id=repo.id,
-            repo_url=repo.github_link,
+            repo_url=repo_url,
+            is_rejected=is_rejected,
+            rejection_reason=rejection_reason,
             business_value=business_value,
             standout_features=standout_features,
             interview_questions=questions,
@@ -571,29 +605,36 @@ def get_repo_analysis(repo_id: int):
     """Get analysis results for a specific repository by ID."""
     with Session(engine) as session:
         repo = session.query(Repo).filter(Repo.id == repo_id).first()
-        
+
         if not repo:
             raise HTTPException(status_code=404, detail="Repository not found")
-        
-        if not repo.repo_data:
+
+        if not repo.repo_analysis:
             raise HTTPException(status_code=400, detail="Repository has not been analyzed yet")
-        
-        return build_analysis_response(repo, repo.repo_data)
+
+        return build_analysis_response(repo, repo.repo_analysis)
 
 
 @app.delete("/repo/{repo_id}")
 def delete_repo_analysis(repo_id: int):
-    """Delete analysis results for a repository (allows re-analysis)."""
+    """Delete analysis and evaluation results for a repository (allows re-analysis)."""
     with Session(engine) as session:
         repo = session.query(Repo).filter(Repo.id == repo_id).first()
-        
+
         if not repo:
             raise HTTPException(status_code=404, detail="Repository not found")
-        
-        if repo.repo_data:
-            session.delete(repo.repo_data)
+
+        deleted_count = 0
+        if repo.repo_analysis:
+            session.delete(repo.repo_analysis)
+            deleted_count += 1
+        if repo.repo_evaluation:
+            session.delete(repo.repo_evaluation)
+            deleted_count += 1
+
+        if deleted_count > 0:
             session.commit()
-        
-        return {"status": "deleted", "repo_id": repo_id}
+
+        return {"status": "deleted", "repo_id": repo_id, "deleted_items": deleted_count}
 
 

@@ -1,30 +1,22 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, UserData } from '@/services/api';
+import { useMutation } from '@tanstack/react-query';
+import { api, AnalysisResponse, EvaluateResponse } from '@/services/api';
 
-export function useUserMetadata(username: string | null) {
-  return useQuery({
-    queryKey: ['user', username],
-    queryFn: () => api.fetchUserMetadata(`https://github.com/${username}`),
-    enabled: !!username,
-  });
-}
-
-export function useCreateUserMetadata() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (username: string) => api.fetchUserMetadata(`https://github.com/${username}`),
-    onSuccess: (data) => {
-      queryClient.setQueryData(['user', data.username], data);
+/**
+ * A mutation hook that orchestrates the parallel analysis and evaluation of a repository.
+ *
+ * @returns A mutation object from tanstack-query.
+ *   - `mutate`: A function to trigger the analysis, accepting a `repo_url`.
+ *   - `data`: On success, this will be a tuple `[AnalysisResponse, EvaluateResponse]`.
+ *   - `isPending`, `isError`, `error`, etc. are also available.
+ */
+export function useAnalyzeAndEvaluateRepo() {
+  return useMutation<[AnalysisResponse, EvaluateResponse], Error, string>({
+    mutationFn: (repo_url: string) => {
+      // Run both API calls in parallel for efficiency
+      return Promise.all([
+        api.analyzeRepo(repo_url),
+        api.evaluateRepo(repo_url),
+      ]);
     },
   });
-}
-
-export function useAnalyzeRepo() {
-  return useMutation({
-    mutationFn: (repoLink: string) => api.analyzeRepo(repoLink),
-  });
-}
-
-export function getCachedUserData(queryClient: ReturnType<typeof useQueryClient>, username: string): UserData | undefined {
-  return queryClient.getQueryData(['user', username]);
 }

@@ -453,14 +453,16 @@ def _get_git_commits(repo_path: Path, max_commits: int = 500) -> list[CommitInfo
             cwd=repo_path,
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='ignore',  # Ignore Unicode decode errors (emoji, special chars)
             timeout=60
         )
         
-        if result.returncode != 0:
+        if result.returncode != 0 or not result.stdout:
             return commits
-        
+
         current_commit: CommitInfo | None = None
-        
+
         for line in result.stdout.split("\n"):
             if "|||" in line:
                 # Save previous commit
@@ -674,6 +676,8 @@ def clone_repository(repo_url: str, target_path: Path, timeout: int = 300) -> bo
             ["git", "clone", repo_url, str(target_path)],
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='ignore',  # Ignore Unicode decode errors
             timeout=timeout
         )
         return result.returncode == 0

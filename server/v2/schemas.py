@@ -7,7 +7,6 @@ These models are the source of truth for what the backend returns.
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -217,9 +216,9 @@ class BusinessValue(BaseModel):
         ..., 
         description="Does this project solve an actual problem someone would pay for or use?"
     )
-    project_type: Literal["real_problem", "tutorial", "portfolio_demo", "learning_exercise", "utility_tool"] = Field(
+    project_type: str = Field(
         ...,
-        description="Classification of what kind of project this is"
+        description="Classification of what kind of project this is (e.g., real_problem, tutorial, portfolio_demo, learning_exercise, utility_tool, library)"
     )
     project_description: str = Field(
         ...,
@@ -237,7 +236,7 @@ class BusinessValue(BaseModel):
 
 class EvaluateRequest(BaseModel):
     """Request body for POST /evaluate endpoint"""
-    repo_id: int = Field(..., description="ID of the repo to evaluate (must have been analyzed first)")
+    repo_url: str = Field(..., description="Full GitHub URL to evaluate (e.g., https://github.com/user/repo)")
 
 
 class EvaluateResponse(BaseModel):
@@ -249,6 +248,8 @@ class EvaluateResponse(BaseModel):
     """
     repo_id: int = Field(..., description="ID of the evaluated repo")
     repo_url: str = Field(..., description="URL of the repo")
+    is_rejected: bool = Field(..., description="True if a critical, reject-worthy issue was found")
+    rejection_reason: str | None = Field(None, description="The reason for the rejection, if applicable")
     business_value: BusinessValue = Field(..., description="LLM assessment of project value and originality")
     standout_features: list[str] = Field(
         default_factory=list,
