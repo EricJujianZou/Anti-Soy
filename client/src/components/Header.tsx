@@ -23,7 +23,7 @@ export const Header = ({ className }: HeaderProps) => {
               aria-label="Go back"
             >
               <img
-                src="/logo.png"
+                src={`${import.meta.env.BASE_URL}logo.png`}
                 alt="ANTI-SOY logo"
                 className="h-16 w-16"
               />
