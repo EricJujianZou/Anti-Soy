@@ -9,7 +9,7 @@ interface TerminalInputProps {
 
 export const TerminalInput = ({ 
   onSubmit, 
-  placeholder = "github_username",
+  placeholder = "github_repository_url",
   isLoading = false 
 }: TerminalInputProps) => {
   const [value, setValue] = useState("");
