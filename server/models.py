@@ -40,48 +40,71 @@ class Repo(Base):
 
     # Relationships
     user = relationship("User", back_populates="repos")
-    repo_data = relationship("RepoData", back_populates="repo", uselist=False, cascade="all, delete-orphan")
+    repo_analysis = relationship("RepoAnalysis", back_populates="repo", uselist=False, cascade="all, delete-orphan")
+    repo_evaluation = relationship("RepoEvaluation", back_populates="repo", uselist=False, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Repo(id={self.id}, github_link='{self.github_link}', stars={self.stars})>"
 
 
-class RepoData(Base):
-    """Repository analysis data model (V2) storing analyzer results"""
-    __tablename__ = "repo_data"
+class RepoAnalysis(Base):
+    """Repository analysis data (owned by /analyze endpoint)"""
+    __tablename__ = "repo_analysis"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     repo_id = Column(Integer, ForeignKey("repos.id", ondelete="CASCADE"), nullable=False, unique=True)
     analyzed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Verdict
-    verdict_type = Column(String)  # "Slop Coder", "Junior", "Senior", "Good Use of AI"
-    verdict_confidence = Column(Integer)  # 0-100
-    
+    verdict_type = Column(String, nullable=False)  # "Slop Coder", "Junior", "Senior", "Good AI Coder"
+    verdict_confidence = Column(Integer, nullable=False)  # 0-100
+
     # AI Slop Analyzer
-    ai_slop_score = Column(Integer)  # 0-100
-    ai_slop_confidence = Column(String)  # "low", "medium", "high"
-    ai_slop_data = Column(Text)  # JSON: Full AISlop object
-    
+    ai_slop_score = Column(Integer, nullable=False)  # 0-100
+    ai_slop_confidence = Column(String, nullable=False)  # "low", "medium", "high"
+    ai_slop_data = Column(Text, nullable=False)  # JSON: Full AISlop object
+
     # Bad Practices Analyzer
-    bad_practices_score = Column(Integer)  # 0-100
-    bad_practices_data = Column(Text)  # JSON: Full BadPractices object
-    
+    bad_practices_score = Column(Integer, nullable=False)  # 0-100
+    bad_practices_data = Column(Text, nullable=False)  # JSON: Full BadPractices object
+
     # Code Quality Analyzer
-    code_quality_score = Column(Integer)  # 0-100
-    code_quality_data = Column(Text)  # JSON: Full CodeQuality object
-    
+    code_quality_score = Column(Integer, nullable=False)  # 0-100
+    code_quality_data = Column(Text, nullable=False)  # JSON: Full CodeQuality object
+
     # Files Analyzed
-    files_analyzed = Column(Text)  # JSON: List of FileAnalyzed objects
-    
-    # Interview Questions (generated on demand)
-    interview_questions = Column(Text)  # JSON: List of InterviewQuestion objects
-    
-    # Project Evaluation (LLM-powered, from /evaluate endpoint)
-    project_evaluation = Column(Text)  # JSON: BusinessValue object (solves_real_problem, project_type, etc.)
-    
+    files_analyzed = Column(Text, nullable=False)  # JSON: List of FileAnalyzed objects
+
     # Relationship
-    repo = relationship("Repo", back_populates="repo_data")
+    repo = relationship("Repo", back_populates="repo_analysis")
 
     def __repr__(self):
-        return f"<RepoData(id={self.id}, repo_id={self.repo_id}, verdict='{self.verdict_type}')>"
+        return f"<RepoAnalysis(id={self.id}, repo_id={self.repo_id}, verdict='{self.verdict_type}')>"
+
+
+class RepoEvaluation(Base):
+    """Repository evaluation data (owned by /evaluate endpoint)"""
+    __tablename__ = "repo_evaluation"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_id = Column(Integer, ForeignKey("repos.id", ondelete="CASCADE"), nullable=False, unique=True)
+    evaluated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Rejection Status
+    is_rejected = Column(Integer, default=0, nullable=False)  # SQLite boolean (0 or 1)
+    rejection_reason = Column(Text)  # Nullable
+
+    # Business Value (JSON)
+    business_value = Column(Text, nullable=False)  # JSON: BusinessValue object
+
+    # Standout Features (JSON array of strings)
+    standout_features = Column(Text, nullable=False)  # JSON: List of strings
+
+    # Interview Questions (JSON)
+    interview_questions = Column(Text, nullable=False)  # JSON: List of InterviewQuestion objects
+
+    # Relationship
+    repo = relationship("Repo", back_populates="repo_evaluation")
+
+    def __repr__(self):
+        return f"<RepoEvaluation(id={self.id}, repo_id={self.repo_id}, rejected={bool(self.is_rejected)})>"
