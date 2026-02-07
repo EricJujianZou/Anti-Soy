@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir --upgrade pip \
         "pydantic>=2.12.5" \
         "python-dotenv>=1.2.1" \
         "requests>=2.32.5" \
+        "slowapi>=0.1.9" \
         "sqlalchemy>=2.0.45"
 
 COPY . .
