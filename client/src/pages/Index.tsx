@@ -25,12 +25,12 @@ const Index = () => {
         <div className="flex flex-col items-center justify-center min-h-[70vh] animate-fade-in-up">
           <div className="text-center mb-12 max-w-2xl">
             <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-              Find the truth behind the code.
+              Skip The Bullshit,
               <br />
-              <span className="text-primary text-glow">Go beyond the resume.</span>
+              <span className="text-primary text-glow">Filter Out Soy Devs</span>
             </h1>
             <p className="text-muted-foreground">
-              Anti-Soy analyzes a GitHub repository to give you the evidence-backed questions you need to identify a great hire.
+              We help startup founders, who are struggling to find the right talent, filter out bad engineers quickly by scanning talents' project repos.
             </p>
           </div>
 
