@@ -601,7 +601,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
 
 
 @app.get("/repo/{repo_id}")
-def get_repo_analysis(repo_id: int):
+@limiter.limit("30/minute")
+def get_repo_analysis(request: Request, repo_id: int):
     """Get analysis results for a specific repository by ID."""
     with Session(engine) as session:
         repo = session.query(Repo).filter(Repo.id == repo_id).first()
@@ -616,7 +617,8 @@ def get_repo_analysis(repo_id: int):
 
 
 @app.delete("/repo/{repo_id}")
-def delete_repo_analysis(repo_id: int):
+@limiter.limit("5/minute")
+def delete_repo_analysis(request: Request, repo_id: int):
     """Delete analysis and evaluation results for a repository (allows re-analysis)."""
     with Session(engine) as session:
         repo = session.query(Repo).filter(Repo.id == repo_id).first()
