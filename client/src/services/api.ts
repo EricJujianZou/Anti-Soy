@@ -126,6 +126,31 @@ export interface EvaluateResponse {
 
 
 // =============================================================================
+// SSE STREAMING TYPES
+// =============================================================================
+
+export interface EvaluationEvent {
+  business_value: BusinessValue | null;
+  standout_features: string[];
+  is_rejected: boolean;
+  rejection_reason?: string | null;
+}
+
+export interface QuestionsEvent {
+  interview_questions: InterviewQuestion[];
+  error?: string;
+}
+
+export interface StreamCallbacks {
+  onAnalysis: (data: AnalysisResponse) => void;
+  onEvaluation: (data: EvaluationEvent) => void;
+  onQuestions: (data: QuestionsEvent) => void;
+  onDone: () => void;
+  onError: (message: string, step: string) => void;
+}
+
+
+// =============================================================================
 // API FUNCTIONS
 // =============================================================================
 
@@ -164,3 +189,87 @@ export const api = {
     return res.json();
   },
 };
+
+
+/**
+ * SSE streaming endpoint — progressive analysis.
+ * Uses fetch + ReadableStream (can't use EventSource with POST).
+ */
+export async function analyzeRepoStream(
+  repo_url: string,
+  callbacks: StreamCallbacks,
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/analyze-stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo_url }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to start analysis" }));
+    callbacks.onError(error.detail, "http");
+    return;
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    callbacks.onError("Streaming not supported", "http");
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE messages are separated by double newlines
+    const messages = buffer.split("\n\n");
+    // Last element may be incomplete — keep it in buffer
+    buffer = messages.pop() ?? "";
+
+    for (const message of messages) {
+      if (!message.trim()) continue;
+
+      let eventType = "";
+      let data = "";
+
+      for (const line of message.split("\n")) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          data = line.slice(6);
+        }
+      }
+
+      if (!eventType || !data) continue;
+
+      try {
+        const parsed = JSON.parse(data);
+
+        switch (eventType) {
+          case "analysis":
+            callbacks.onAnalysis(parsed);
+            break;
+          case "evaluation":
+            callbacks.onEvaluation(parsed);
+            break;
+          case "questions":
+            callbacks.onQuestions(parsed);
+            break;
+          case "done":
+            callbacks.onDone();
+            break;
+          case "error":
+            callbacks.onError(parsed.message ?? "Unknown error", parsed.step ?? "unknown");
+            break;
+        }
+      } catch {
+        callbacks.onError("Failed to parse server response", "parse");
+      }
+    }
+  }
+}
