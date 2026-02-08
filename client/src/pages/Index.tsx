@@ -50,7 +50,7 @@ const Index = () => {
               <span className="text-primary text-glow">Filter Out Soy Devs</span>
             </h1>
             <p className="text-muted-foreground">
-              We help startup founders, who are struggling to find the right talent, filter out bad engineers quickly by scanning talents' project repos.
+              We help founders & recruiters, who are struggling to find the right talent, filter out bad engineers by scanning talents' project repos.
             </p>
           </div>
 
