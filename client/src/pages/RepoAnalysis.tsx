@@ -2,8 +2,8 @@ import { useEffect, useState, useRef } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
-import { ProgressTracker, PipelineStep } from "@/components/ProgressTracker";
-import { useAnalyzeAndEvaluateRepo } from "@/hooks/useApi";
+import { ProgressTracker } from "@/components/ProgressTracker";
+import { useAnalyzeStream } from "@/hooks/useAnalyzeStream";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -18,8 +18,13 @@ import {
   Bot,
   MessageSquare,
   FileCode,
+  Loader2,
 } from "lucide-react";
-import type { AnalysisResponse, EvaluateResponse } from "@/services/api";
+import type {
+  AnalysisResponse,
+  EvaluationEvent,
+  InterviewQuestion,
+} from "@/services/api";
 
 function getRepoName(githubLink: string): string {
   const parts = githubLink.replace(/\/$/, "").split("/");
@@ -31,16 +36,19 @@ const RepoAnalysis = () => {
   const [searchParams] = useSearchParams();
   const repoLink = searchParams.get("link");
 
-  const [steps, setSteps] = useState<PipelineStep[]>([
-    { id: "clone", label: "Cloning Repository", description: "Getting the code", status: "pending" },
-    { id: "analyze", label: "Static Analysis", description: "Running code & pattern checks", status: "pending" },
-    { id: "evaluate", label: "LLM Evaluation", description: "Assessing business value", status: "pending" },
-    { id: "complete", label: "Complete", description: "Analysis ready", status: "pending" },
-  ]);
+  const {
+    error,
+    analysis,
+    evaluation,
+    questions,
+    questionsError,
+    startStream,
+  } = useAnalyzeStream();
 
-  const mutation = useAnalyzeAndEvaluateRepo();
   const [hasStarted, setHasStarted] = useState(false);
-  const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [feedbackStatus, setFeedbackStatus] = useState<
+    "idle" | "submitting" | "success" | "error"
+  >("idle");
   const feedbackRef = useRef<HTMLDivElement>(null);
 
   const scrollToFeedback = () => {
@@ -50,37 +58,11 @@ const RepoAnalysis = () => {
   useEffect(() => {
     if (repoLink && !hasStarted) {
       setHasStarted(true);
-      mutation.mutate(repoLink);
+      startStream(repoLink);
     }
-  }, [repoLink, hasStarted, mutation]);
-
-  useEffect(() => {
-    if (mutation.isPending) {
-      let currentIndex = 0;
-      const interval = setInterval(() => {
-        setSteps((prev) =>
-          prev.map((step, idx) => ({
-            ...step,
-            status: idx < currentIndex ? "complete" : idx === currentIndex ? "active" : "pending",
-          }))
-        );
-        currentIndex++;
-        if (currentIndex > steps.length) clearInterval(interval);
-      }, 800);
-      return () => clearInterval(interval);
-    }
-  }, [mutation.isPending, steps.length]);
-
-  useEffect(() => {
-    if (mutation.isSuccess) {
-      setSteps((prev) => prev.map((step) => ({ ...step, status: "complete" })));
-    }
-  }, [mutation.isSuccess]);
+  }, [repoLink, hasStarted, startStream]);
 
   const repoName = repoLink ? getRepoName(repoLink) : repoId || "Unknown";
-  const isLoading = mutation.isPending;
-  const analysisData = mutation.data ? mutation.data[0] : null;
-  const evaluationData = mutation.data ? mutation.data[1] : null;
 
   if (!repoLink) {
     return (
@@ -110,54 +92,74 @@ const RepoAnalysis = () => {
         <p className="text-sm text-muted-foreground">
           Running deeper metrics and signal checks...
         </p>
-        {mutation.isError && (
-          <p className="text-sm text-red-500 mt-2">
-            Error: {mutation.error?.message || "Failed to analyze repository"}
-          </p>
+        {error && (
+          <p className="text-sm text-red-500 mt-2">Error: {error}</p>
         )}
       </div>
-      <ProgressTracker steps={steps} className="w-full max-w-md" />
+      <ProgressTracker steps={[]} className="w-full max-w-md" />
     </div>
   );
 
   const handleFeedbackSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setFeedbackStatus("submitting");
-    
+
     const formData = new FormData(e.currentTarget);
     const data = Object.fromEntries(formData);
-    
-    // TODO: Replace with your actual Formspree ID for FEEDBACK
 
     try {
       const response = await fetch(`https://formspree.io/f/maqdyrqz`, {
         method: "POST",
-        headers: { 
-          "Accept": "application/json",
-          "Content-Type": "application/json"
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(data),
       });
       if (response.ok) setFeedbackStatus("success");
       else setFeedbackStatus("error");
-    } catch (error) { setFeedbackStatus("error"); }
+    } catch {
+      setFeedbackStatus("error");
+    }
   };
 
-  const renderResults = (analysis: AnalysisResponse, evaluation: EvaluateResponse) => {
+  const renderResults = (
+    analysis: AnalysisResponse,
+    evaluation: EvaluationEvent | null,
+    questions: InterviewQuestion[] | null,
+    questionsError: string | null,
+  ) => {
     const criticalFindings = analysis.bad_practices.findings.filter(
-      (f) => f.severity === "critical"
+      (f) => f.severity === "critical",
     );
     const nonCriticalFindings = analysis.bad_practices.findings.filter(
-      (f) => f.severity !== "critical"
+      (f) => f.severity !== "critical",
     );
-    const standoutFeatures = evaluation.standout_features.filter((f) => f.trim());
+    const standoutFeatures =
+      evaluation?.standout_features?.filter((f) => f.trim()) ?? [];
     const hasStandout = standoutFeatures.length > 0;
+    const evalLoaded = evaluation !== null;
+    const questionsLoaded = questions !== null;
 
     return (
       <div className="animate-fade-in-up space-y-6 max-w-3xl mx-auto">
-        {/* ====== SECTION 1: HEADLINE BANNER ====== */}
+        {/* ====== SECTION 1: VERDICT BANNER ====== */}
         <div>
-          {hasStandout ? (
+          {!evalLoaded ? (
+            // LLM still loading — show static verdict + spinner
+            <div className="rounded-lg border bg-muted/30 p-6">
+              <div className="flex items-center gap-3">
+                <Badge variant="outline">{analysis.verdict.type}</Badge>
+                <span className="text-muted-foreground text-xs">
+                  {analysis.verdict.confidence}% confidence
+                </span>
+              </div>
+              <div className="flex items-center gap-2 mt-3 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Finalizing decision...</span>
+              </div>
+            </div>
+          ) : hasStandout ? (
             <div className="rounded-lg border-2 border-primary bg-primary/5 p-6">
               <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">
                 What Stands Out
@@ -171,7 +173,9 @@ const RepoAnalysis = () => {
               <div className="flex items-center gap-3">
                 <XCircle className="h-6 w-6 text-destructive flex-shrink-0" />
                 <div>
-                  <h2 className="text-xl font-bold text-destructive">REJECT</h2>
+                  <h2 className="text-xl font-bold text-destructive">
+                    REJECT
+                  </h2>
                   <p className="text-sm text-destructive/80 mt-1">
                     {evaluation.rejection_reason || "Critical issue found."}
                   </p>
@@ -204,200 +208,197 @@ const RepoAnalysis = () => {
               </div>
               {analysis.ai_slop.negative_ai_signals.length > 0 && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Key AI Signals:</p>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Key AI Signals:
+                  </p>
                   <ul className="space-y-1">
-                    {analysis.ai_slop.negative_ai_signals.slice(0, 3).map((s, i) => (
-                      <li key={i} className="text-xs text-muted-foreground">
-                        <span className="text-foreground">{s.type}</span>
-                        {s.file && ` — ${s.file}:${s.line}`}
-                      </li>
-                    ))}
+                    {analysis.ai_slop.negative_ai_signals
+                      .slice(0, 3)
+                      .map((s, i) => (
+                        <li
+                          key={i}
+                          className="text-xs text-muted-foreground"
+                        >
+                          <span className="text-foreground">{s.type}</span>
+                          {s.file && ` — ${s.file}:${s.line}`}
+                        </li>
+                      ))}
                   </ul>
                 </div>
               )}
-              {evaluation.business_value.project_summary && (
+              {evalLoaded && evaluation.business_value?.project_summary && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">LLM Summary:</p>
-                  <p className="text-sm">{evaluation.business_value.project_summary}</p>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    LLM Summary:
+                  </p>
+                  <p className="text-sm">
+                    {evaluation.business_value.project_summary}
+                  </p>
                 </div>
               )}
             </CollapsibleContent>
           </Collapsible>
         </div>
 
-        {/* ====== SECTION 2: BUSINESS VALUE (BULLSHIT DETECTOR) ====== */}
+        {/* ====== SECTION 2: BUSINESS VALUE ====== */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Does the Code Back It Up?</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-muted-foreground text-xs mb-0.5">Project Type</p>
-                <p className="font-medium capitalize">
-                  {evaluation.business_value.project_type.replace(/_/g, " ")}
-                </p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-xs mb-0.5">Solves Real Problem?</p>
-                <Badge
-                  variant={
-                    evaluation.business_value.solves_real_problem ? "default" : "secondary"
-                  }
-                >
-                  {evaluation.business_value.solves_real_problem ? "Yes" : "No"}
-                </Badge>
-              </div>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-xs mb-0.5">What It Claims To Do</p>
-              <p>{evaluation.business_value.project_description}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-xs mb-0.5">Originality Assessment</p>
-              <p>{evaluation.business_value.originality_assessment}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* ====== SECTION 3: CRITICAL ERRORS ====== */}
-        {criticalFindings.length > 0 && (
-          <Card className="border-destructive/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-destructive" />
-                Critical Issues ({criticalFindings.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {criticalFindings.map((finding, i) => (
-                <div
-                  key={i}
-                  className="rounded border border-destructive/20 bg-destructive/5 p-3 text-sm"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium">{finding.type}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {finding.file}:{finding.line}
-                    </span>
-                  </div>
-                  <p className="text-muted-foreground text-xs">{finding.explanation}</p>
-                  {finding.snippet && (
-                    <pre className="mt-2 rounded bg-background p-2 text-xs overflow-x-auto">
-                      <code>{finding.snippet}</code>
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ====== SECTION 4: AI USAGE ====== */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Bot className="h-4 w-4" />
-              AI Usage
-              <Badge
-                variant={
-                  analysis.ai_slop.score > 60
-                    ? "destructive"
-                    : analysis.ai_slop.score > 30
-                      ? "secondary"
-                      : "outline"
-                }
-              >
-                {analysis.ai_slop.score}/100
-              </Badge>
-              <span className="text-xs text-muted-foreground font-normal">
-                {analysis.ai_slop.confidence} confidence
-              </span>
+            <CardTitle className="text-base">
+              Does the Code Back It Up?
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
-            {analysis.ai_slop.negative_ai_signals.length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-2">Red Flags</p>
-                <div className="space-y-2">
-                  {analysis.ai_slop.negative_ai_signals.map((signal, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <span className="text-destructive mt-0.5 text-xs">✕</span>
-                      <div>
-                        <span className="font-medium text-sm">{signal.type}</span>
-                        {signal.file && (
-                          <span className="text-muted-foreground text-xs ml-2">
-                            {signal.file}:{signal.line}
-                          </span>
-                        )}
-                        <p className="text-xs text-muted-foreground">{signal.explanation}</p>
-                      </div>
-                    </div>
-                  ))}
+            {!evalLoaded || !evaluation.business_value ? (
+              // Skeleton loader
+              <div className="space-y-3 animate-pulse">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="h-10 bg-muted rounded" />
+                  <div className="h-10 bg-muted rounded" />
                 </div>
+                <div className="h-6 bg-muted rounded w-3/4" />
+                <div className="h-6 bg-muted rounded w-full" />
               </div>
-            )}
-            {analysis.ai_slop.positive_ai_signals.length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-2">Good Signs</p>
-                <div className="space-y-2">
-                  {analysis.ai_slop.positive_ai_signals.map((signal, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <span className="text-primary mt-0.5 text-xs">✓</span>
-                      <div>
-                        <span className="font-medium text-sm">{signal.type}</span>
-                        <p className="text-xs text-muted-foreground">{signal.explanation}</p>
-                      </div>
-                    </div>
-                  ))}
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-0.5">
+                      Project Type
+                    </p>
+                    <p className="font-medium capitalize">
+                      {evaluation.business_value.project_type.replace(
+                        /_/g,
+                        " ",
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-0.5">
+                      Solves Real Problem?
+                    </p>
+                    <Badge
+                      variant={
+                        evaluation.business_value.solves_real_problem
+                          ? "default"
+                          : "secondary"
+                      }
+                    >
+                      {evaluation.business_value.solves_real_problem
+                        ? "Yes"
+                        : "No"}
+                    </Badge>
+                  </div>
                 </div>
-              </div>
+                <div>
+                  <p className="text-muted-foreground text-xs mb-0.5">
+                    What It Claims To Do
+                  </p>
+                  <p>{evaluation.business_value.project_description}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs mb-0.5">
+                    Originality Assessment
+                  </p>
+                  <p>{evaluation.business_value.originality_assessment}</p>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
 
-        {/* ====== SECTION 5: INTERVIEW QUESTIONS (Collapsible) ====== */}
-        {evaluation.interview_questions.length > 0 && (
-          <Collapsible>
-            <Card>
-              <CollapsibleTrigger asChild>
-                <CardHeader className="cursor-pointer hover:bg-muted/30 transition-colors pb-3">
-                  <CardTitle className="text-base flex items-center justify-between">
-                    <span className="flex items-center gap-2">
-                      <MessageSquare className="h-4 w-4" />
-                      Interview Questions ({evaluation.interview_questions.length})
+        {/* ====== SECTION 3: AI USAGE (available immediately) ====== */}
+        <Collapsible>
+          <Card>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/30 transition-colors pb-3">
+                <CardTitle className="text-base flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    AI Usage
+                    <Badge
+                      variant={
+                        analysis.ai_slop.score > 60
+                          ? "destructive"
+                          : analysis.ai_slop.score > 30
+                            ? "secondary"
+                            : "outline"
+                      }
+                    >
+                      {analysis.ai_slop.score}/100
+                    </Badge>
+                    <span className="text-xs text-muted-foreground font-normal">
+                      {analysis.ai_slop.confidence} confidence
                     </span>
-                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                  </CardTitle>
-                </CardHeader>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <CardContent className="space-y-3">
-                  {evaluation.interview_questions.map((q, i) => (
-                    <div key={i} className="rounded border p-3">
-                      <p className="font-medium text-sm mb-2">{q.question}</p>
-                      <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                        <div>
-                          <span className="font-medium text-foreground">Based on: </span>
-                          {q.based_on}
-                        </div>
-                        <div>
-                          <span className="font-medium text-foreground">Probes: </span>
-                          {q.probes}
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="mt-2 text-xs">
-                        {q.category}
-                      </Badge>
+                  </span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                </CardTitle>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="space-y-4 text-sm">
+                {analysis.ai_slop.negative_ai_signals.length > 0 && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Red Flags
+                    </p>
+                    <div className="space-y-2">
+                      {analysis.ai_slop.negative_ai_signals.map(
+                        (signal, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="text-destructive mt-0.5 text-xs">
+                              ✕
+                            </span>
+                            <div>
+                              <span className="font-medium text-sm">
+                                {signal.type}
+                              </span>
+                              {signal.file && (
+                                <span className="text-muted-foreground text-xs ml-2">
+                                  {signal.file}:{signal.line}
+                                </span>
+                              )}
+                              <p className="text-xs text-muted-foreground">
+                                {signal.explanation}
+                              </p>
+                            </div>
+                          </div>
+                        ),
+                      )}
                     </div>
-                  ))}
-                </CardContent>
-              </CollapsibleContent>
-            </Card>
-          </Collapsible>
-        )}
+                  </div>
+                )}
+                {analysis.ai_slop.positive_ai_signals.length > 0 && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Good Signs
+                    </p>
+                    <div className="space-y-2">
+                      {analysis.ai_slop.positive_ai_signals.map(
+                        (signal, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="text-primary mt-0.5 text-xs">
+                              ✓
+                            </span>
+                            <div>
+                              <span className="font-medium text-sm">
+                                {signal.type}
+                              </span>
+                              <p className="text-xs text-muted-foreground">
+                                {signal.explanation}
+                              </p>
+                            </div>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
 
-        {/* ====== SECTION 6: DEEP DIVE (Collapsible) ====== */}
+        {/* ====== SECTION 4: DEEP DIVE (available immediately) ====== */}
         <Collapsible>
           <Card>
             <CollapsibleTrigger asChild>
@@ -413,19 +414,58 @@ const RepoAnalysis = () => {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <CardContent className="space-y-6">
+                {/* Critical Issues */}
+                {criticalFindings.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-destructive" />
+                      Critical Issues ({criticalFindings.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {criticalFindings.map((finding, i) => (
+                        <div
+                          key={i}
+                          className="rounded border border-destructive/20 bg-destructive/5 p-3 text-sm"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium">{finding.type}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {finding.file}:{finding.line}
+                            </span>
+                          </div>
+                          <p className="text-muted-foreground text-xs">
+                            {finding.explanation}
+                          </p>
+                          {finding.snippet && (
+                            <pre className="mt-2 rounded bg-background p-2 text-xs overflow-x-auto">
+                              <code>{finding.snippet}</code>
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Bad Practices (non-critical) */}
                 {nonCriticalFindings.length > 0 && (
                   <div>
                     <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
                       Bad Practices
-                      <Badge variant="secondary">{analysis.bad_practices.score}/100</Badge>
+                      <Badge variant="secondary">
+                        {analysis.bad_practices.score}/100
+                      </Badge>
                     </h4>
                     <div className="space-y-2">
                       {nonCriticalFindings.map((f, i) => (
                         <div key={i} className="rounded border p-2 text-xs">
                           <div className="flex items-center gap-2 mb-1">
                             <Badge
-                              variant={f.severity === "warning" ? "secondary" : "outline"}
+                              variant={
+                                f.severity === "warning"
+                                  ? "secondary"
+                                  : "outline"
+                              }
                               className="text-xs"
                             >
                               {f.severity}
@@ -435,7 +475,9 @@ const RepoAnalysis = () => {
                               {f.file}:{f.line}
                             </span>
                           </div>
-                          <p className="text-muted-foreground">{f.explanation}</p>
+                          <p className="text-muted-foreground">
+                            {f.explanation}
+                          </p>
                         </div>
                       ))}
                     </div>
@@ -446,32 +488,46 @@ const RepoAnalysis = () => {
                 <div>
                   <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
                     Code Quality
-                    <Badge variant="secondary">{analysis.code_quality.score}/100</Badge>
+                    <Badge variant="secondary">
+                      {analysis.code_quality.score}/100
+                    </Badge>
                   </h4>
                   <div className="grid grid-cols-3 gap-3 text-xs">
                     <div>
                       <p className="text-muted-foreground">Organization</p>
-                      <p className="font-medium">{analysis.code_quality.files_organized}%</p>
+                      <p className="font-medium">
+                        {analysis.code_quality.files_organized}%
+                      </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Test Coverage</p>
-                      <p className="font-medium">{analysis.code_quality.test_coverage}%</p>
+                      <p className="font-medium">
+                        {analysis.code_quality.test_coverage}%
+                      </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">README</p>
-                      <p className="font-medium">{analysis.code_quality.readme_quality}%</p>
+                      <p className="font-medium">
+                        {analysis.code_quality.readme_quality}%
+                      </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Error Handling</p>
-                      <p className="font-medium">{analysis.code_quality.error_handling}%</p>
+                      <p className="font-medium">
+                        {analysis.code_quality.error_handling}%
+                      </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Logging</p>
-                      <p className="font-medium">{analysis.code_quality.logging_quality}%</p>
+                      <p className="font-medium">
+                        {analysis.code_quality.logging_quality}%
+                      </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Dependencies</p>
-                      <p className="font-medium">{analysis.code_quality.dependency_health}%</p>
+                      <p className="font-medium">
+                        {analysis.code_quality.dependency_health}%
+                      </p>
                     </div>
                   </div>
                   {analysis.code_quality.findings.length > 0 && (
@@ -487,7 +543,9 @@ const RepoAnalysis = () => {
                               {f.file}:{f.line}
                             </span>
                           </div>
-                          <p className="text-muted-foreground">{f.explanation}</p>
+                          <p className="text-muted-foreground">
+                            {f.explanation}
+                          </p>
                         </div>
                       ))}
                     </div>
@@ -506,7 +564,9 @@ const RepoAnalysis = () => {
                         className="flex items-center justify-between text-xs py-1 border-b last:border-0"
                       >
                         <span className="font-mono">{f.path}</span>
-                        <span className="text-muted-foreground">{f.loc} LOC</span>
+                        <span className="text-muted-foreground">
+                          {f.loc} LOC
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -516,32 +576,106 @@ const RepoAnalysis = () => {
           </Card>
         </Collapsible>
 
-        {/* ====== SECTION 7: FEEDBACK FORM ====== */}
+        {/* ====== SECTION 5: INTERVIEW QUESTIONS ====== */}
+        <Collapsible>
+          <Card>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/30 transition-colors pb-3">
+                <CardTitle className="text-base flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Interview Questions
+                    {questionsLoaded && questions.length > 0 && (
+                      <Badge variant="outline">{questions.length}</Badge>
+                    )}
+                  </span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                </CardTitle>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="space-y-3">
+                {!questionsLoaded ? (
+                  <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-sm">
+                      Generating interview questions...
+                    </span>
+                  </div>
+                ) : questionsError ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    {questionsError}
+                  </p>
+                ) : questions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    No interview questions generated.
+                  </p>
+                ) : (
+                  questions.map((q, i) => (
+                    <div key={i} className="rounded border p-3">
+                      <p className="font-medium text-sm mb-2">{q.question}</p>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                        <div>
+                          <span className="font-medium text-foreground">
+                            Based on:{" "}
+                          </span>
+                          {q.based_on}
+                        </div>
+                        <div>
+                          <span className="font-medium text-foreground">
+                            Probes:{" "}
+                          </span>
+                          {q.probes}
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="mt-2 text-xs">
+                        {q.category}
+                      </Badge>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
+        {/* ====== SECTION 6: FEEDBACK FORM ====== */}
         <div ref={feedbackRef} className="pt-12 pb-8">
           <Card className="border-primary/20 bg-primary/5">
             <CardHeader>
-              <CardTitle className="text-lg text-center">Feedback & Updates</CardTitle>
+              <CardTitle className="text-lg text-center">
+                Feedback & Updates
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {feedbackStatus === "success" ? (
                 <div className="text-center text-success py-8">
                   <p className="font-bold">Thank you for your feedback!</p>
-                  <p className="text-sm text-muted-foreground">We'll use it to improve the detection engine.</p>
+                  <p className="text-sm text-muted-foreground">
+                    We'll use it to improve the detection engine.
+                  </p>
                 </div>
               ) : (
-                <form onSubmit={handleFeedbackSubmit} className="space-y-4 max-w-md mx-auto">
+                <form
+                  onSubmit={handleFeedbackSubmit}
+                  className="space-y-4 max-w-md mx-auto"
+                >
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Email (optional)</label>
-                    <input 
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Email (optional)
+                    </label>
+                    <input
                       name="email"
-                      type="email" 
+                      type="email"
                       placeholder="you@example.com"
                       className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Feedback</label>
-                    <textarea 
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Feedback
+                    </label>
+                    <textarea
                       name="message"
                       required
                       rows={3}
@@ -549,12 +683,14 @@ const RepoAnalysis = () => {
                       className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary resize-none"
                     ></textarea>
                   </div>
-                  <button 
+                  <button
                     type="submit"
                     disabled={feedbackStatus === "submitting"}
                     className="w-full bg-primary text-primary-foreground py-2 rounded text-sm font-bold hover:bg-primary/90 transition-colors"
                   >
-                    {feedbackStatus === "submitting" ? "Sending..." : "Send Feedback"}
+                    {feedbackStatus === "submitting"
+                      ? "Sending..."
+                      : "Send Feedback"}
                   </button>
                 </form>
               )}
@@ -592,19 +728,22 @@ const RepoAnalysis = () => {
               {repoLink}
             </a>
           </div>
-          
-          {/* Centered Feedback Button - Only shows when results are ready */}
-          {!isLoading && analysisData && (
+
+          {/* Feedback Button - Only shows when results are ready */}
+          {analysis && (
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:block">
-              <button onClick={scrollToFeedback} className="bg-primary hover:bg-primary/90 text-primary-foreground px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-primary/20 transition-all hover:scale-105">
+              <button
+                onClick={scrollToFeedback}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-primary/20 transition-all hover:scale-105"
+              >
                 Give Feedback
               </button>
             </div>
           )}
         </div>
-        {isLoading || !analysisData || !evaluationData
+        {!analysis
           ? renderLoading()
-          : renderResults(analysisData, evaluationData)}
+          : renderResults(analysis, evaluation, questions, questionsError)}
       </main>
     </GridBackground>
   );
