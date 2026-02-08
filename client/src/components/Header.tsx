@@ -31,13 +31,11 @@ export const Header = ({ className }: HeaderProps) => {
             </button>
             <div className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground">
               <span className="text-primary">●</span>
-              <span>v1.0.0</span>
+              <span>v1.2.0</span>
             </div>
           </div>
           
-          <span className="text-xs text-muted-foreground uppercase tracking-widest">
-            GitHub Profile Analyzer
-          </span>
+         
         </div>
       </div>
     </header>

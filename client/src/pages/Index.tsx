@@ -44,11 +44,8 @@ const Index = () => {
       <footer className="border-t border-border bg-card/30 mt-auto">
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>© 2025 Anti-Soy</span>
-            <span className="flex items-center gap-2">
-              <span className="text-primary pulse-glow">●</span>
-              System Operational
-            </span>
+            
+            
           </div>
         </div>
       </footer>
