@@ -1,10 +1,13 @@
 import { useNavigate } from "react-router-dom";
+import { useState } from "react";
 import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
 import { TerminalInput } from "@/components/TerminalInput";
 
 const Index = () => {
   const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
 
   const handleSubmit = (repoUrl: string) => {
     // Basic validation for a GitHub URL
@@ -15,6 +18,23 @@ const Index = () => {
       // Simple alert for now, could be a more elegant toast/notification
       alert("Please enter a valid GitHub repository URL.");
     }
+  };
+
+  const handleEmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStatus("submitting");
+    
+
+    
+    try {
+      const response = await fetch(`https://formspree.io/f/mwvnkgvn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (response.ok) setStatus("success");
+      else setStatus("error");
+    } catch (error) { setStatus("error"); }
   };
 
   return (
@@ -38,17 +58,44 @@ const Index = () => {
             onSubmit={handleSubmit}
             placeholder="https://github.com/user/repository"
           />
+
+          {/* Email Capture */}
+          <div className="mt-16 w-full max-w-md text-center animate-fade-in-up" style={{ animationDelay: "0.2s" }}>
+            <p className="text-sm text-muted-foreground mb-4">
+              Want updates? Leave your email.
+            </p>
+            {status === "success" ? (
+              <div className="p-3 rounded border border-success/50 bg-success/10 text-success text-sm">
+                Thanks! You're on the list.
+              </div>
+            ) : (
+              <form onSubmit={handleEmailSubmit} className="flex gap-2">
+                <input
+                  type="email"
+                  required
+                  placeholder="Very.Kind@Person.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="flex-1 bg-card/50 border border-border rounded px-4 py-2 text-sm focus:outline-none focus:border-primary transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={status === "submitting"}
+                  className="bg-primary text-primary-foreground px-4 py-2 rounded text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {status === "submitting" ? "..." : "Join"}
+                </button>
+              </form>
+            )}
+          </div>
         </div>
       </main>
 
       <footer className="border-t border-border bg-card/30 mt-auto">
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>© 2025 Anti-Soy</span>
-            <span className="flex items-center gap-2">
-              <span className="text-primary pulse-glow">●</span>
-              System Operational
-            </span>
+            
+            
           </div>
         </div>
       </footer>

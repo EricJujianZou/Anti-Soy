@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
@@ -40,6 +40,12 @@ const RepoAnalysis = () => {
 
   const mutation = useAnalyzeAndEvaluateRepo();
   const [hasStarted, setHasStarted] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const feedbackRef = useRef<HTMLDivElement>(null);
+
+  const scrollToFeedback = () => {
+    feedbackRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   useEffect(() => {
     if (repoLink && !hasStarted) {
@@ -113,6 +119,29 @@ const RepoAnalysis = () => {
       <ProgressTracker steps={steps} className="w-full max-w-md" />
     </div>
   );
+
+  const handleFeedbackSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setFeedbackStatus("submitting");
+    
+    const formData = new FormData(e.currentTarget);
+    const data = Object.fromEntries(formData);
+    
+    // TODO: Replace with your actual Formspree ID for FEEDBACK
+
+    try {
+      const response = await fetch(`https://formspree.io/f/maqdyrqz`, {
+        method: "POST",
+        headers: { 
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(data),
+      });
+      if (response.ok) setFeedbackStatus("success");
+      else setFeedbackStatus("error");
+    } catch (error) { setFeedbackStatus("error"); }
+  };
 
   const renderResults = (analysis: AnalysisResponse, evaluation: EvaluateResponse) => {
     const criticalFindings = analysis.bad_practices.findings.filter(
@@ -486,6 +515,52 @@ const RepoAnalysis = () => {
             </CollapsibleContent>
           </Card>
         </Collapsible>
+
+        {/* ====== SECTION 7: FEEDBACK FORM ====== */}
+        <div ref={feedbackRef} className="pt-12 pb-8">
+          <Card className="border-primary/20 bg-primary/5">
+            <CardHeader>
+              <CardTitle className="text-lg text-center">Feedback & Updates</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {feedbackStatus === "success" ? (
+                <div className="text-center text-success py-8">
+                  <p className="font-bold">Thank you for your feedback!</p>
+                  <p className="text-sm text-muted-foreground">We'll use it to improve the detection engine.</p>
+                </div>
+              ) : (
+                <form onSubmit={handleFeedbackSubmit} className="space-y-4 max-w-md mx-auto">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Email (optional)</label>
+                    <input 
+                      name="email"
+                      type="email" 
+                      placeholder="you@example.com"
+                      className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Feedback</label>
+                    <textarea 
+                      name="message"
+                      required
+                      rows={3}
+                      placeholder="What did we miss? Was this analysis accurate?"
+                      className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary resize-none"
+                    ></textarea>
+                  </div>
+                  <button 
+                    type="submit"
+                    disabled={feedbackStatus === "submitting"}
+                    className="w-full bg-primary text-primary-foreground py-2 rounded text-sm font-bold hover:bg-primary/90 transition-colors"
+                  >
+                    {feedbackStatus === "submitting" ? "Sending..." : "Send Feedback"}
+                  </button>
+                </form>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -494,7 +569,7 @@ const RepoAnalysis = () => {
     <GridBackground>
       <Header />
       <main className="container mx-auto px-4 py-12">
-        <div className="flex items-center justify-between mb-8">
+        <div className="relative flex items-center justify-between mb-8">
           <div>
             <div className="flex items-center gap-3 mb-2">
               <Link
@@ -517,6 +592,15 @@ const RepoAnalysis = () => {
               {repoLink}
             </a>
           </div>
+          
+          {/* Centered Feedback Button - Only shows when results are ready */}
+          {!isLoading && analysisData && (
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:block">
+              <button onClick={scrollToFeedback} className="bg-primary hover:bg-primary/90 text-primary-foreground px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-primary/20 transition-all hover:scale-105">
+                Give Feedback
+              </button>
+            </div>
+          )}
         </div>
         {isLoading || !analysisData || !evaluationData
           ? renderLoading()
