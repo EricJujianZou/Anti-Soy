@@ -660,14 +660,40 @@ const RepoAnalysis = () => {
                   onSubmit={handleFeedbackSubmit}
                   className="space-y-4 max-w-md mx-auto"
                 >
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">
+                        Name
+                      </label>
+                      <input
+                        name="name"
+                        type="text"
+                        required
+                        
+                        className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">
+                        Email
+                      </label>
+                      <input
+                        name="email"
+                        type="email"
+                        required
+                        
+                        className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                      />
+                    </div>
+                  </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">
-                      Email (optional)
+                      I am a...
                     </label>
                     <input
-                      name="email"
-                      type="email"
-                      placeholder="you@example.com"
+                      name="role"
+                      type="text"
+                      placeholder="founder, hiring manager, engineer, student"
                       className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
                     />
                   </div>

@@ -6,7 +6,9 @@ import { TerminalInput } from "@/components/TerminalInput";
 
 const Index = () => {
   const navigate = useNavigate();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
 
   const handleSubmit = (repoUrl: string) => {
@@ -32,7 +34,7 @@ const Index = () => {
       const response = await fetch(`https://formspree.io/f/mwvnkgvn`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ name, email, role }),
       });
       if (response.ok) setStatus("success");
       else setStatus("error");
@@ -71,22 +73,41 @@ const Index = () => {
                 Thanks! You're on the list.
               </div>
             ) : (
-              <form onSubmit={handleEmailSubmit} className="flex gap-2">
-                <input
-                  type="email"
-                  required
-                  placeholder="Very.Kind@Person.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="flex-1 bg-card/50 border border-border rounded px-4 py-2 text-sm focus:outline-none focus:border-primary transition-colors"
-                />
-                <button
-                  type="submit"
-                  disabled={status === "submitting"}
-                  className="bg-primary text-primary-foreground px-4 py-2 rounded text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
-                >
-                  {status === "submitting" ? "..." : "Join"}
-                </button>
+              <form onSubmit={handleEmailSubmit} className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="flex-1 bg-card/50 border border-border rounded px-4 py-2 text-sm focus:outline-none focus:border-primary transition-colors"
+                  />
+                  <input
+                    type="email"
+                    required
+                    placeholder="Email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="flex-1 bg-card/50 border border-border rounded px-4 py-2 text-sm focus:outline-none focus:border-primary transition-colors"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="I am a founder/engineer/recruiter/student"
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="flex-1 bg-card/50 border border-border rounded px-4 py-2 text-sm focus:outline-none focus:border-primary transition-colors"
+                  />
+                  <button
+                    type="submit"
+                    disabled={status === "submitting"}
+                    className="bg-primary text-primary-foreground px-4 py-2 rounded text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {status === "submitting" ? "..." : "Join"}
+                  </button>
+                </div>
               </form>
             )}
           </div>
