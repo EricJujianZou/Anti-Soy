@@ -12,10 +12,12 @@ const Index = () => {
   const handleSubmit = (repoUrl: string) => {
     // Basic validation for a GitHub URL
     if (repoUrl.includes("github.com")) {
-      // Navigate to the analysis page, passing the repo URL as a query param
+      gtag("event", "analysis_started", {
+        event_category: "engagement",
+        repo_url: repoUrl,
+      });
       navigate(`/repo/new?link=${encodeURIComponent(repoUrl)}`);
     } else {
-      // Simple alert for now, could be a more elegant toast/notification
       alert("Please enter a valid GitHub repository URL.");
     }
   };
@@ -50,7 +52,7 @@ const Index = () => {
               <span className="text-primary text-glow">Filter Out Soy Devs</span>
             </h1>
             <p className="text-muted-foreground">
-              We help startup founders, who are struggling to find the right talent, filter out bad engineers quickly by scanning talents' project repos.
+              We help founders & recruiters, who are struggling to find the right talent, filter out bad engineers by scanning talents' project repos.
             </p>
           </div>
 
