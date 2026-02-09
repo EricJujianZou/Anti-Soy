@@ -51,18 +51,33 @@ export function useAnalyzeStream() {
         }));
       },
       onDone: () => {
+        gtag("event", "analysis_completed", {
+          event_category: "engagement",
+          repo_url: repoUrl,
+        });
         setState((prev) => ({ ...prev, isStreaming: false, isDone: true }));
         streamingRef.current = false;
       },
       onError: (message) => {
+        gtag("event", "analysis_failed", {
+          event_category: "engagement",
+          repo_url: repoUrl,
+          error_message: message,
+        });
         setState((prev) => ({ ...prev, isStreaming: false, error: message }));
         streamingRef.current = false;
       },
     }).catch((err) => {
+      const errorMsg = err instanceof Error ? err.message : "Connection failed";
+      gtag("event", "analysis_failed", {
+        event_category: "engagement",
+        repo_url: repoUrl,
+        error_message: errorMsg,
+      });
       setState((prev) => ({
         ...prev,
         isStreaming: false,
-        error: err instanceof Error ? err.message : "Connection failed",
+        error: errorMsg,
       }));
       streamingRef.current = false;
     });

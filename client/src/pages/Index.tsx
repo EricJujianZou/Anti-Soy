@@ -12,10 +12,12 @@ const Index = () => {
   const handleSubmit = (repoUrl: string) => {
     // Basic validation for a GitHub URL
     if (repoUrl.includes("github.com")) {
-      // Navigate to the analysis page, passing the repo URL as a query param
+      gtag("event", "analysis_started", {
+        event_category: "engagement",
+        repo_url: repoUrl,
+      });
       navigate(`/repo/new?link=${encodeURIComponent(repoUrl)}`);
     } else {
-      // Simple alert for now, could be a more elegant toast/notification
       alert("Please enter a valid GitHub repository URL.");
     }
   };
