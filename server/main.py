@@ -656,12 +656,7 @@ def evaluate_repo(request: Request, body: EvaluateRequest):
             bad_practices_result = analyze_bad_practices(extracted_data)
             code_quality_result = analyze_code_quality(extracted_data)
 
-        # 4. Determine Rejection Status (tentative - will be finalized after LLM call)
-        critical_security_issue = None
-        for finding in bad_practices_result.findings:
-            if finding.severity == "critical":
-                critical_security_issue = finding.explanation
-                break
+        # 4. Rejection status determined after LLM call (based on standout features + AI slop only)
         
         # 5. Gather context for LLM
         findings_context = []
@@ -785,15 +780,12 @@ Return ONLY the JSON object, no other text or markdown formatting."""
         rejection_reason = None
 
         if standout_features:
-            # If something stands out, never reject (even if critical issues or AI slop)
+            # If something stands out, never reject (even if AI slop)
             is_rejected = False
             rejection_reason = None
         else:
-            # Nothing stands out - check for rejection criteria
-            if critical_security_issue:
-                is_rejected = True
-                rejection_reason = f"Critical Security Issue: {critical_security_issue}"
-            elif ai_slop_result.score == 100:
+            # Nothing stands out - only reject for pure AI slop
+            if ai_slop_result.score == 100:
                 is_rejected = True
                 rejection_reason = "AI-generated code and nothing stands out"
 
@@ -1001,12 +993,6 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                 )
 
                 # 9. Determine rejection status
-                critical_security_issue = None
-                for finding in bad_practices_result.findings:
-                    if finding.severity == "critical":
-                        critical_security_issue = finding.explanation
-                        break
-
                 business_value = None
                 standout_features = []
                 is_rejected = False
@@ -1020,10 +1006,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                     is_rejected = False
                     rejection_reason = None
                 else:
-                    if critical_security_issue:
-                        is_rejected = True
-                        rejection_reason = f"Critical Security Issue: {critical_security_issue}"
-                    elif ai_slop_result.score == 100:
+                    if ai_slop_result.score == 100:
                         is_rejected = True
                         rejection_reason = "AI-generated code and nothing stands out"
 

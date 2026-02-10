@@ -125,13 +125,13 @@ SECURITY_PATTERNS = [
         explanation="User input passed directly to database without validation.",
     ),
     
-    # Eval/exec with user input
+    # Eval/exec with user input (Python-specific)
     DetectionPattern(
         name="dangerous_eval",
         category="security",
         severity=Severity.CRITICAL,
-        pattern=r'''(?:eval|exec|compile)\s*\(\s*(?:request|params|input|data|user|body|f["\']|.*\+)''',
-        file_pattern=None,
+        pattern=r'''\b(?:eval|exec|compile)\s*\(\s*(?:request|params|input|data|user|body|f["'])''',
+        file_pattern="*.py",
         explanation="eval/exec with potentially user-controlled input - major security risk.",
     ),
     
