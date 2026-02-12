@@ -61,6 +61,11 @@ const Index = () => {
           <TerminalInput
             onSubmit={handleSubmit}
             placeholder="https://github.com/user/repository"
+            examples={[
+              { label: "To-Do List", url: "https://github.com/chaosium43/METROHACKS22" },
+              { label: "GPT Wrapper", url: "https://github.com/EricJujianZou/PromptAssist" },
+              { label: "Strong Implementation", url: "https://github.com/Skullheadx/The-Traveling-Salesman-Problem" },
+            ]}
           />
 
           {/* Email Capture */}
