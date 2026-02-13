@@ -9,7 +9,7 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
-const basename = import.meta.env.MODE === "production" ? "/Anti-Soy" : "";
+const basename = "";
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
