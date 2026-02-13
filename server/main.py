@@ -90,6 +90,8 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 
 # CORS middleware
 ALLOWED_ORIGINS = [
+    "https://antisoy.com",
+    "https://www.antisoy.com",
     "https://ericjujianzou.github.io",
     "https://EricJujianZou.github.io",
     "http://localhost:5173",

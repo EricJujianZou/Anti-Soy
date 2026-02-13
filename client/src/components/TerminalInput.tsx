@@ -73,42 +73,44 @@ export const TerminalInput = ({
         </div>
       </div>
 
-      <button
-        type="submit"
-        disabled={!value.trim() || isLoading}
-        className={cn(
-          "mt-4 w-full border border-primary bg-primary/10 text-primary py-3 px-6",
-          "uppercase tracking-widest text-sm font-medium",
-          "transition-all duration-300",
-          "hover:bg-primary hover:text-primary-foreground",
-          "disabled:opacity-50 disabled:cursor-not-allowed",
-          "relative group"
-        )}
-      >
-        <span className="absolute -top-px -left-px text-primary group-hover:text-primary-foreground text-xs">┌</span>
-        <span className="absolute -top-px -right-px text-primary group-hover:text-primary-foreground text-xs">┐</span>
-        <span className="absolute -bottom-px -left-px text-primary group-hover:text-primary-foreground text-xs">└</span>
-        <span className="absolute -bottom-px -right-px text-primary group-hover:text-primary-foreground text-xs">┘</span>
+      <div className="flex justify-center mt-4">
+        <button
+          type="submit"
+          disabled={!value.trim() || isLoading}
+          className={cn(
+            "w-3/5 border border-primary bg-primary/10 text-primary py-2.5 px-6",
+            "uppercase tracking-widest text-xs font-medium",
+            "transition-all duration-300",
+            "hover:bg-primary hover:text-primary-foreground",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+            "relative group"
+          )}
+        >
+          <span className="absolute -top-px -left-px text-primary group-hover:text-primary-foreground text-xs">┌</span>
+          <span className="absolute -top-px -right-px text-primary group-hover:text-primary-foreground text-xs">┐</span>
+          <span className="absolute -bottom-px -left-px text-primary group-hover:text-primary-foreground text-xs">└</span>
+          <span className="absolute -bottom-px -right-px text-primary group-hover:text-primary-foreground text-xs">┘</span>
 
-        {isLoading ? (
-          <span className="flex items-center justify-center gap-2">
-            <span className="pulse-glow">●</span>
-            Processing...
-          </span>
-        ) : (
-          "[ run scan ]"
-        )}
-      </button>
+          {isLoading ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="pulse-glow">●</span>
+              Processing...
+            </span>
+          ) : (
+            "[ run scan ]"
+          )}
+        </button>
+      </div>
 
       {examples && examples.length > 0 && (
         <>
-          <div className="flex items-center gap-3 mt-4">
+          <div className="flex items-center gap-3 mt-4 max-w-sm mx-auto">
             <div className="flex-1 border-t border-border/50" />
             <span className="text-xs text-muted-foreground uppercase tracking-widest">or choose an example</span>
             <div className="flex-1 border-t border-border/50" />
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid grid-cols-3 gap-2 max-w-sm mx-auto">
             {examples.map((example) => (
               <button
                 key={example.url}
@@ -116,7 +118,7 @@ export const TerminalInput = ({
                 onClick={() => handleRunExample(example.url)}
                 disabled={isLoading}
                 className={cn(
-                  "border border-primary/50 bg-transparent text-primary/80 py-2 px-3",
+                  "border border-primary/50 bg-transparent text-primary/80 py-1.5 px-2",
                   "uppercase tracking-widest text-[10px] font-medium",
                   "transition-all duration-300",
                   "hover:border-primary hover:text-primary hover:bg-primary/5",
