@@ -6,10 +6,13 @@ This module extracts data only — no analysis or signal detection.
 """
 
 import json
+import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -495,9 +498,9 @@ def _get_git_commits(repo_path: Path, max_commits: int = 500) -> list[CommitInfo
             commits.append(current_commit)
             
     except subprocess.TimeoutExpired:
-        print(f"Git log timed out for {repo_path}")
+        logger.warning("Git log timed out for %s", repo_path)
     except Exception as e:
-        print(f"Error getting git commits: {e}")
+        logger.error("Error getting git commits: %s", e, exc_info=True)
     
     return commits
 
@@ -682,8 +685,8 @@ def clone_repository(repo_url: str, target_path: Path, timeout: int = 300) -> bo
         )
         return result.returncode == 0
     except subprocess.TimeoutExpired:
-        print(f"Clone timed out for {repo_url}")
+        logger.warning("Clone timed out for %s", repo_url)
         return False
     except Exception as e:
-        print(f"Clone failed: {e}")
+        logger.error("Clone failed for %s: %s", repo_url, e, exc_info=True)
         return False

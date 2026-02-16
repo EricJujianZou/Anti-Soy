@@ -6,8 +6,11 @@ Model must be trained separately using classifier_training_guide.md.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import NamedTuple
+
+logger = logging.getLogger(__name__)
 
 # Try to import joblib (for loading sklearn models)
 try:
@@ -62,28 +65,28 @@ class AICodeClassifier:
     def _load_model(self):
         """Load trained model files if available."""
         if not JOBLIB_AVAILABLE:
-            print("Warning: joblib not installed. Using heuristic fallback.")
+            logger.warning("joblib not installed — using heuristic fallback")
             return
-        
+
         if not MODEL_FILE.exists():
-            print(f"Warning: Model file not found at {MODEL_FILE}. Using heuristic fallback.")
+            logger.warning("Model file not found at %s — using heuristic fallback", MODEL_FILE)
             return
-        
+
         try:
             self.model = joblib.load(MODEL_FILE)
-            
+
             if SCALER_FILE.exists():
                 self.scaler = joblib.load(SCALER_FILE)
-            
+
             if FEATURE_NAMES_FILE.exists():
                 with open(FEATURE_NAMES_FILE, 'r') as f:
                     self.feature_names = json.load(f)
-            
+
             self.model_loaded = True
-            print(f"AI classifier model loaded successfully.")
-            
+            logger.info("AI classifier model loaded successfully (mode=ml)")
+
         except Exception as e:
-            print(f"Warning: Failed to load model: {e}. Using heuristic fallback.")
+            logger.error("Failed to load ML model: %s — using heuristic fallback", e, exc_info=True)
     
     def predict(self, features: dict) -> ClassifierResult:
         """
