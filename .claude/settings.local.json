@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/pip.exe install:*)",
+      "Bash(\"c:/Users/zouju/Coding Projects/Anti-Soy/server/.venv/Scripts/python.exe\" -m pip install joblib scikit-learn)"
+    ]
+  }
+}
