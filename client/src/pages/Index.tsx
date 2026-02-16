@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useRef } from "react";
-import { GridBackground } from "@/components/GridBackground";
+// import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
 import { TerminalInput } from "@/components/TerminalInput";
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
-import { GridBackground } from "@/components/GridBackground";
+// import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
 import { ProgressTracker } from "@/components/ProgressTracker";
 import { useAnalyzeStream } from "@/hooks/useAnalyzeStream";
@@ -66,7 +66,7 @@ const RepoAnalysis = () => {
 
   if (!repoLink) {
     return (
-      <GridBackground>
+      <div>
         <Header />
         <main className="container mx-auto flex min-h-[70vh] items-center justify-center px-4 py-12">
           <div className="text-center">
@@ -79,7 +79,7 @@ const RepoAnalysis = () => {
             </Link>
           </div>
         </main>
-      </GridBackground>
+      </div>
     );
   }
 
@@ -728,7 +728,7 @@ const RepoAnalysis = () => {
   };
 
   return (
-    <GridBackground>
+    <div>
       <Header />
       <main className="container mx-auto px-4 py-12">
         <div className="relative flex items-center justify-between mb-8">
@@ -771,7 +771,7 @@ const RepoAnalysis = () => {
           ? renderLoading()
           : renderResults(analysis, evaluation, questions, questionsError)}
       </main>
-    </GridBackground>
+    </div>
   );
 };
 

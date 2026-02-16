@@ -356,7 +356,12 @@ Return ONLY the JSON object, no other text or markdown formatting."""
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=prompt,
-                config={"http_options": {"timeout": 30_000}},
+                config={
+                    "http_options": {"timeout": 30_000},
+                    "temperature": 0.0,
+                    "top_p": 0.0,
+                    "top_k": 1
+                },
             )
             response_text = response.text.strip().replace("```json", "").replace("```", "")
             return json.loads(response_text)
