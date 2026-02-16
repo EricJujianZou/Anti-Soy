@@ -7,11 +7,14 @@ Uses regex-based extraction (no AST) per research methodology.
 All features are numeric for ML classifier compatibility.
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 
 from .data_extractor import RepoData, EXTENSION_TO_LANGUAGE
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -603,7 +606,7 @@ def extract_features(repo_data: RepoData) -> ExtractedFeatures:
             file_features_list.append(features)
         except Exception as e:
             # Skip files that fail to parse
-            print(f"Warning: Failed to extract features from {file_path}: {e}")
+            logger.warning("Failed to extract features from %s: %s", file_path, e)
             continue
     
     # Aggregate all file features

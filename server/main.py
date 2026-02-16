@@ -13,6 +13,10 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+
+from logging_config import setup_logging
+setup_logging()
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
