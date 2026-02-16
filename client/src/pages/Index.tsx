@@ -48,7 +48,7 @@ const Index = () => {
   };
 
   return (
-    <GridBackground>
+    <div>
       <Header />
 
       <main className="container mx-auto px-4 py-12">
@@ -147,7 +147,7 @@ const Index = () => {
           </div>
         </div>
       </footer>
-    </GridBackground>
+    </div>
   );
 };
 
