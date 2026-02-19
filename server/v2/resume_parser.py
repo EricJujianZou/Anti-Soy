@@ -1,7 +1,7 @@
 """
 resume_parser.py
 Handles finding the GitHub corresponding to a person's resume.
-resume_parser.py is currently planned to support .pdf, .docx, and .tex files
+resume_parser.py is currently planned to support .pdf and .docx files
 """
 
 import pymupdf
@@ -9,9 +9,11 @@ import docx
 import json
 from pathlib import Path
 
+PARENT_DIRECTORY = Path(__file__).parent
+
 # blacklisted usernames are loaded from file so that they don't clog up the parser source code
 GITHUB_USERNAME_BLACKLIST = []
-with open("github_username_blacklist.json", "r") as f:
+with open(f"{PARENT_DIRECTORY}/github_username_blacklist.json", "r") as f:
     GITHUB_USERNAME_BLACKLIST = json.load(f)
 
 class struct_resume_dump:
@@ -40,10 +42,19 @@ def PdfExtractor(pdf_path: str) -> struct_resume_dump:
     return struct_resume_dump(text, hyperlinks)
 
 def DocxExtractor(docx_path: str) -> struct_resume_dump:
-    raise ResumeParseException("Not implemented")
+    text = ""
+    hyperlinks = []
 
-def TexExtractor(tex_path: str) -> struct_resume_dump:
-    raise ResumeParseException("Not implemented")
+    try:
+        with open(docx_path, "rb") as f:
+            doc = docx.Document(f)
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+                for hyperlink in paragraph.hyperlinks:
+                    hyperlinks.append(hyperlink.url)
+    except Exception as e:
+        raise ResumeParseException(f"Error opening DOCX file: {e}")
+    return struct_resume_dump(text, hyperlinks)
 
 """
 Contains all the extractor functions per file type.
@@ -55,7 +66,6 @@ Should there ever be an issue with getting the plaintext, the function should th
 ExtractorList = {
     ".pdf": PdfExtractor,
     ".docx" : DocxExtractor,
-    ".tex" : TexExtractor
 }
 
 """
@@ -71,7 +81,7 @@ def GithubFromResumeDump(resume_dump: struct_resume_dump) -> str:
     candidates = []
     proper_profile_links = [] # profile links directly found from the hyperlinks or the plaintext
     implicit_profile_links = [] # profiles that are found by finding repositories linked to a resume and parsing who made the repository from there
-    plaintext_tokens = resume_dump.plaintext.split(" ")
+    plaintext_tokens = resume_dump.plaintext.split()
     
     # find all instances of github.com links in a resume
     for link in resume_dump.hyperlinks:
@@ -152,7 +162,9 @@ def GithubFromResumeDump(resume_dump: struct_resume_dump) -> str:
         raise ResumeParseException("No github profiles found in resume")
     return best_fit
 
-        
+def ProfileFromResume(resume_path: str) -> str:
+    resume_dump = GeneralExtractor(resume_path)
+    return GithubFromResumeDump(resume_dump)
     
 
 
@@ -163,11 +175,12 @@ if __name__ == "__main__":
         if Path(pdf_file).exists():
             try:
                 resume_dump = GeneralExtractor(pdf_file)
-                print("Extracted text:")
-                print(resume_dump.plaintext)
+                #print("Extracted text:")
+                #print(resume_dump.plaintext)
                 print("Hyperlinks found:")
                 for link in resume_dump.hyperlinks:
                     print(f"  {link}")
+                print(GithubFromResumeDump(resume_dump))
             except ResumeParseException as e:
                 print(f"Error parsing resume: {e}")
         else:
