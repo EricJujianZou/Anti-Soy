@@ -35,6 +35,7 @@ const RepoAnalysis = () => {
   const { repoId } = useParams<{ repoId: string }>();
   const [searchParams] = useSearchParams();
   const repoLink = searchParams.get("link");
+  const priorities = searchParams.get("priorities")?.split(",").filter(Boolean) ?? undefined;
 
   const {
     error,
@@ -58,9 +59,9 @@ const RepoAnalysis = () => {
   useEffect(() => {
     if (repoLink && !hasStarted) {
       setHasStarted(true);
-      startStream(repoLink);
+      startStream(repoLink, priorities);
     }
-  }, [repoLink, hasStarted, startStream]);
+  }, [repoLink, hasStarted, startStream, priorities]);
 
   const repoName = repoLink ? getRepoName(repoLink) : repoId || "Unknown";
 

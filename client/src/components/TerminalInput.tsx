@@ -1,5 +1,16 @@
 import { useState, useRef } from "react";
 import { cn } from "@/utils/utils";
+import { Checkbox } from "@/components/ui/checkbox";
+
+export type PriorityKey = "code_quality" | "security" | "originality" | "production_readiness" | "ai_detection";
+
+const PRIORITY_OPTIONS: { key: PriorityKey; label: string }[] = [
+  { key: "code_quality", label: "Code Quality" },
+  { key: "security", label: "Security" },
+  { key: "originality", label: "Originality" },
+  { key: "production_readiness", label: "Production Readiness" },
+  { key: "ai_detection", label: "AI Detection" },
+];
 
 interface Example {
   label: string;
@@ -7,7 +18,7 @@ interface Example {
 }
 
 interface TerminalInputProps {
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string, priorities: PriorityKey[]) => void;
   placeholder?: string;
   isLoading?: boolean;
   examples?: Example[];
@@ -22,11 +33,29 @@ export const TerminalInput = ({
   const [value, setValue] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [priorities, setPriorities] = useState<Set<PriorityKey>>(
+    new Set(PRIORITY_OPTIONS.map((o) => o.key))
+  );
+
+  const togglePriority = (key: PriorityKey) => {
+    setPriorities((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        if (next.size <= 1) return prev; // minimum 1
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const prioritiesArray = () => Array.from(priorities);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (value.trim() && !isLoading) {
-      onSubmit(value.trim());
+      onSubmit(value.trim(), prioritiesArray());
     }
   };
 
@@ -35,7 +64,7 @@ export const TerminalInput = ({
     setValue(url);
     inputRef.current?.focus();
     setTimeout(() => {
-      onSubmit(url);
+      onSubmit(url, prioritiesArray());
     }, 600);
   };
 
@@ -71,6 +100,27 @@ export const TerminalInput = ({
             isFocused && "cursor-blink"
           )} />
         </div>
+      </div>
+
+      {/* Evaluation Priorities */}
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+        <span className="text-xs text-muted-foreground uppercase tracking-widest mr-1">Priorities:</span>
+        {PRIORITY_OPTIONS.map((opt) => (
+          <label
+            key={opt.key}
+            className="flex items-center gap-1.5 cursor-pointer select-none group"
+          >
+            <Checkbox
+              checked={priorities.has(opt.key)}
+              onCheckedChange={() => togglePriority(opt.key)}
+              disabled={isLoading}
+              className="border-primary/60 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+            />
+            <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
+              {opt.label}
+            </span>
+          </label>
+        ))}
       </div>
 
       <div className="flex justify-center mt-4">
