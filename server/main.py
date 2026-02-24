@@ -100,7 +100,9 @@ ALLOWED_ORIGINS = [
     "https://EricJujianZou.github.io",
     "http://localhost:5173",
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:8080",
+    "http://localhost:8001",
 ]
 
 app.add_middleware(
