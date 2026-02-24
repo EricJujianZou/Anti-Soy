@@ -201,6 +201,10 @@ class InterviewQuestion(BaseModel):
 class AnalyzeRequest(BaseModel):
     """Request body for POST /analyze endpoint"""
     repo_url: str = Field(..., description="Full GitHub URL to analyze (e.g., https://github.com/user/repo)")
+    priorities: list[str] | None = Field(
+        default=None,
+        description="Evaluation priorities to weight. Options: code_quality, security, originality, production_readiness, ai_detection. Defaults to all if omitted."
+    )
 
 
 # =============================================================================
@@ -231,6 +235,10 @@ class BusinessValue(BaseModel):
     project_summary: str = Field(
         ...,
         description="2-3 sentence executive summary for a hiring manager"
+    )
+    project_scope_estimate: str = Field(
+        default="professional",
+        description="Estimated project scope: hobby, coursework, professional, or production_oss"
     )
 
 
