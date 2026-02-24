@@ -144,6 +144,40 @@ SECURITY_PATTERNS = [
         file_pattern=None,
         explanation="SSL verification disabled - vulnerable to man-in-the-middle attacks.",
     ),
+
+    # --- GO-SPECIFIC SECURITY ---
+
+    # Go: SQL injection via string concatenation in queries
+    DetectionPattern(
+        name="sql_injection_risk",
+        category="security",
+        severity=Severity.CRITICAL,
+        pattern=r'''(?:\.Query|\.Exec|\.QueryRow|\.QueryContext|\.ExecContext)\s*\([^)]*(?:fmt\.Sprintf|"\s*\+)''',
+        file_pattern="*.go",
+        explanation="SQL query built with string concatenation/fmt.Sprintf in Go - use parameterized queries with $1/$2 placeholders.",
+    ),
+
+    # --- C#-SPECIFIC SECURITY ---
+
+    # C#: SQL injection via SqlCommand with string concatenation
+    DetectionPattern(
+        name="sql_injection_risk",
+        category="security",
+        severity=Severity.CRITICAL,
+        pattern=r'''(?:SqlCommand|OleDbCommand|OdbcCommand)\s*\(\s*(?:\$"|["\'][^"\']*\"\s*\+|string\.Format)''',
+        file_pattern="*.cs",
+        explanation="SQL query built with string concatenation in C# - use parameterized queries with SqlParameter.",
+    ),
+
+    # C#: Process.Start with user-controlled input
+    DetectionPattern(
+        name="command_injection",
+        category="security",
+        severity=Severity.CRITICAL,
+        pattern=r'''Process\.Start\s*\([^)]*(?:request|input|user|param|args|data|Request|Input)''',
+        file_pattern="*.cs",
+        explanation="Process.Start with potentially user-controlled input - risk of command injection.",
+    ),
 ]
 
 # -----------------------------------------------------------------------------
@@ -217,6 +251,61 @@ ROBUSTNESS_PATTERNS = [
         file_pattern="*.py",
         explanation="File read without 'with' context manager - use 'with open(...) as f:' for proper cleanup.",
     ),
+
+    # --- GO-SPECIFIC ROBUSTNESS ---
+
+    # Go: HTTP requests using DefaultClient (no timeout)
+    DetectionPattern(
+        name="no_timeout",
+        category="robustness",
+        severity=Severity.WARNING,
+        pattern=r'''(?:http\.Get|http\.Post|http\.PostForm|http\.Head|http\.DefaultClient\.)''',
+        file_pattern="*.go",
+        explanation="Using default HTTP client without timeout in Go - create a custom http.Client with Timeout set.",
+    ),
+
+    # Go: Ignoring returned error values
+    DetectionPattern(
+        name="ignored_error",
+        category="robustness",
+        severity=Severity.WARNING,
+        pattern=r'''[a-zA-Z_]\w*\s*,\s*_\s*:?=\s*\w+''',
+        file_pattern="*.go",
+        explanation="Returned error value ignored in Go (val, _ := ...). Always check error return values.",
+    ),
+
+    # --- C#-SPECIFIC ROBUSTNESS ---
+
+    # C#: HttpClient without timeout
+    DetectionPattern(
+        name="no_timeout",
+        category="robustness",
+        severity=Severity.WARNING,
+        pattern=r'''new\s+HttpClient\s*\(\s*\)''',
+        file_pattern="*.cs",
+        explanation="HttpClient created without timeout configuration in C# - set HttpClient.Timeout or use IHttpClientFactory.",
+        negative_pattern=r'''Timeout\s*=''',
+    ),
+
+    # C#: Empty catch blocks
+    DetectionPattern(
+        name="silent_error",
+        category="robustness",
+        severity=Severity.WARNING,
+        pattern=r'''catch\s*(?:\([^)]*\))?\s*\{\s*\}''',
+        file_pattern="*.cs",
+        explanation="Empty catch block in C# silently swallows errors - at minimum, log the error.",
+    ),
+
+    # C#: Catching generic Exception without specifics
+    DetectionPattern(
+        name="generic_exception",
+        category="robustness",
+        severity=Severity.INFO,
+        pattern=r'''catch\s*\(\s*Exception\s+\w+\s*\)''',
+        file_pattern="*.cs",
+        explanation="Catching generic Exception in C# - catch specific exception types for better error handling.",
+    ),
 ]
 
 # -----------------------------------------------------------------------------
@@ -247,16 +336,29 @@ HYGIENE_PATTERNS = [
         file_pattern="*.{js,ts,jsx,tsx}",
         explanation="Large block of commented-out code - remove dead code to improve maintainability.",
     ),
-    
-    # TODO/FIXME/HACK comments (indicates unfinished work)
+
+    # Go: Commented-out code blocks
     DetectionPattern(
-        name="todo_comment",
+        name="commented_code",
         category="hygiene",
         severity=Severity.INFO,
-        pattern=r'''(?:#|//)\s*(?:TODO|FIXME|HACK|XXX|BUG)\s*[:\s]''',
-        file_pattern=None,
-        explanation="TODO/FIXME comment indicates unfinished work.",
+        pattern=r'''//\s*(?:func |if |for |return |var |type |import ).*\n(?://.*\n){2,}''',
+        file_pattern="*.go",
+        explanation="Large block of commented-out Go code - remove dead code to improve maintainability.",
     ),
+
+    # C#: Commented-out code blocks
+    DetectionPattern(
+        name="commented_code",
+        category="hygiene",
+        severity=Severity.INFO,
+        pattern=r'''//\s*(?:public |private |protected |internal |static |class |if |for |foreach |while |return |using |var ).*\n(?://.*\n){2,}''',
+        file_pattern="*.cs",
+        explanation="Large block of commented-out C# code - remove dead code to improve maintainability.",
+    ),
+    
+    # NOTE: TODO/FIXME/HACK comments are handled separately via _check_todo_comments()
+    # to aggregate them and cap their score impact (they shouldn't drive a negative verdict alone).
     
     # Debug flags left on
     DetectionPattern(
@@ -314,6 +416,7 @@ class BadPracticesAnalyzer:
         findings.extend(self._check_env_committed(repo_data))
         findings.extend(self._check_gitignore_issues(repo_data))
         findings.extend(self._check_print_statements(repo_data))
+        findings.extend(self._check_todo_comments(repo_data))
         
         # Count by category
         security_count = sum(1 for f in findings if self._get_category(f.type) == "security")
@@ -420,6 +523,24 @@ class BadPracticesAnalyzer:
                         continue
                     if 'console.log(' in line:
                         print_occurrences.append(f"{file_path}:{i+1}")
+
+            # Go: fmt.Println/fmt.Printf (debug print statements)
+            elif file_path.endswith('.go'):
+                for i, line in enumerate(lines):
+                    stripped = line.strip()
+                    if stripped.startswith('//'):
+                        continue
+                    if re.search(r'fmt\.Print(?:ln|f)?\s*\(', line):
+                        print_occurrences.append(f"{file_path}:{i+1}")
+
+            # C#: Console.WriteLine (debug print statements)
+            elif file_path.endswith('.cs'):
+                for i, line in enumerate(lines):
+                    stripped = line.strip()
+                    if stripped.startswith('//'):
+                        continue
+                    if 'Console.Write' in line:
+                        print_occurrences.append(f"{file_path}:{i+1}")
         
         # Only create finding if there are print statements
         if len(print_occurrences) >= 3:  # Threshold: 3+ to flag
@@ -443,6 +564,48 @@ class BadPracticesAnalyzer:
         
         return findings
     
+    def _check_todo_comments(self, repo_data: RepoData) -> list[Finding]:
+        """
+        Check for TODO/FIXME/HACK comments and aggregate them.
+
+        TODOs are standard convention in Go and C# (and most languages).
+        We aggregate them into a single informational finding and cap
+        their score impact so high TODO count alone cannot drive a
+        negative verdict.
+        """
+        findings: list[Finding] = []
+        todo_occurrences: list[str] = []  # "file:line" format
+        todo_pattern = re.compile(r'(?:#|//)\s*(?:TODO|FIXME|HACK|XXX|BUG)\s*[:\s]', re.IGNORECASE)
+
+        for file_path, content in repo_data.files.items():
+            if is_test_file(file_path):
+                continue
+            if not is_code_file(file_path):
+                continue
+
+            lines = content.split('\n')
+            for i, line in enumerate(lines):
+                if todo_pattern.search(line):
+                    todo_occurrences.append(f"{file_path}:{i+1}")
+
+        if todo_occurrences:
+            first_file, first_line = todo_occurrences[0].rsplit(':', 1)
+            examples = todo_occurrences[:5]
+            examples_str = ', '.join(examples)
+            if len(todo_occurrences) > 5:
+                examples_str += f" ... and {len(todo_occurrences) - 5} more"
+
+            findings.append(Finding(
+                type="todo_comment",
+                severity=Severity.INFO,
+                file=f"Multiple files, first occurrence at {first_file}" if len(todo_occurrences) > 1 else first_file,
+                line=int(first_line),
+                snippet=examples_str,
+                explanation=f"Found {len(todo_occurrences)} TODO/FIXME/HACK comment(s). This is informational - TODOs are standard convention and don't indicate poor quality on their own.",
+            ))
+
+        return findings
+
     def _check_env_committed(self, repo_data: RepoData) -> list[Finding]:
         """Check if .env file is committed (appears in tree)."""
         findings: list[Finding] = []
@@ -530,8 +693,12 @@ class BadPracticesAnalyzer:
             if pattern.name == finding_type:
                 return "hygiene"
         # Special cases
-        if finding_type in ("env_committed", "no_gitignore"):
+        if finding_type in ("env_committed", "no_gitignore", "print_statements", "todo_comment"):
             return "hygiene"
+        if finding_type in ("ignored_error", "generic_exception"):
+            return "robustness"
+        if finding_type == "command_injection":
+            return "security"
         return "hygiene"  # Default
 
 

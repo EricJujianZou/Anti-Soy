@@ -38,6 +38,8 @@ TEST_INDICATORS = (
     'test_', '_test.', '.test.', '.spec.',
     '/tests/', '/test/', '/__tests__/',
     'conftest.py', 'pytest', 'unittest',
+    # C# test conventions
+    'tests.cs', '.tests/', '.test/',
 )
 
 
@@ -66,6 +68,7 @@ INCLUDE_FILES = (
     "Gemfile", "Gemfile.lock", "pom.xml", "build.gradle",
     "composer.json", "composer.lock",
     "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+    "Startup.cs", "Program.cs",
     ".cursorrules", "CLAUDE.md", ".github/copilot-instructions.md",
     "tsconfig.json", "jsconfig.json", ".eslintrc", ".eslintrc.js", ".eslintrc.json",
     "pytest.ini", "setup.cfg", "jest.config.js", "jest.config.ts",
@@ -132,6 +135,7 @@ DEPENDENCY_FILES = {
     "pom.xml": "java",
     "build.gradle": "java",
     "composer.json": "php",
+    ".csproj": "csharp",
 }
 
 # Language detection by extension
@@ -257,8 +261,10 @@ def extract_repo_data(repo_path: str | Path) -> RepoData:
         # Check if we should consider reading this file
         is_code_file = file_path.suffix.lower() in CODE_EXTENSIONS
         is_include_file = filename in INCLUDE_FILES or rel_path in INCLUDE_FILES
-        
-        if not (is_code_file or is_include_file):
+        # Also include C# project files and Go module files by extension
+        is_project_file = file_path.suffix.lower() in (".csproj", ".sln")
+
+        if not (is_code_file or is_include_file or is_project_file):
             continue
         
         # Get file size
@@ -351,7 +357,8 @@ def _calculate_file_importance(rel_path: str, file_size: int) -> int:
     # Entry points - highest priority
     entry_points = ["main.py", "app.py", "server.py", "index.py", "run.py",
                     "index.js", "index.ts", "app.js", "app.ts", "server.js", "server.ts",
-                    "main.go", "main.rs", "main.java", "program.cs"]
+                    "main.go", "main.rs", "main.java",
+                    "program.cs", "startup.cs"]
     if filename in entry_points:
         score += 40
     
@@ -532,6 +539,8 @@ def _extract_dependencies(files: dict[str, str]) -> list[str]:
             dependencies.extend(_parse_cargo_toml(content))
         elif filename == "Gemfile":
             dependencies.extend(_parse_gemfile(content))
+        elif filename.endswith(".csproj"):
+            dependencies.extend(_parse_csproj(content))
     
     # Deduplicate while preserving order
     seen = set()
@@ -637,6 +646,14 @@ def _parse_gemfile(content: str) -> list[str]:
         match = re.match(r"^\s*gem\s+['\"]([^'\"]+)['\"]", line)
         if match:
             deps.append(match.group(1))
+    return deps
+
+
+def _parse_csproj(content: str) -> list[str]:
+    """Parse C# .csproj for NuGet PackageReference dependencies."""
+    deps = []
+    for match in re.finditer(r'<PackageReference\s+Include="([^"]+)"', content):
+        deps.append(match.group(1))
     return deps
 
 
