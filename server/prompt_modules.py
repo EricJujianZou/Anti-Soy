@@ -37,9 +37,10 @@ FILE STRUCTURE:
 CODE FINDINGS (with file locations and code snippets):
 {findings_context}
 
-EVALUATION PRIORITIES:
-You are evaluating this project with the following priorities selected by the reviewer: {priority_names}.
-Weight your analysis accordingly — focus your attention on the selected criteria.
+EVALUATION INSTRUCTIONS:
+{weighting_instruction}
+You are evaluating this project based on the following criteria: {priority_names}.
+Focus your analysis on the signals relevant to these criteria.
 """
 
 
@@ -284,6 +285,34 @@ def _format_priority_names(priorities: list[str]) -> str:
     return ", ".join(names.get(p, p) for p in priorities)
 
 
+def _get_weighting_instruction(priorities: list[str]) -> str:
+    """
+    Creates a detailed instruction for the LLM on how to weigh priorities.
+    """
+    if not priorities or len(priorities) == len(ALL_PRIORITIES):
+        return "Evaluate all factors equally. In your summary, confirm that you have considered all evaluation criteria."
+
+    names = {
+        "code_quality": "Code Quality",
+        "security": "Security",
+        "originality": "Originality",
+        "production_readiness": "Production Readiness",
+        "ai_detection": "AI Detection",
+    }
+    
+    high_priority_names = [f"**{names[p]}** (High Priority)" for p in priorities if p in names]
+    
+    standard_priority_keys = [p for p in ALL_PRIORITIES if p not in priorities]
+    standard_priority_names = [f"**{names[p]}** (Standard Priority)" for p in standard_priority_keys if p in names]
+
+    instruction = f"Evaluate this project by weighing {', '.join(high_priority_names)} more than other factors"
+    if standard_priority_names:
+        instruction += f" like {', '.join(standard_priority_names)}"
+    instruction += ". In your summary, explicitly state how you've considered this weighting."
+    
+    return instruction
+
+
 def build_evaluation_prompt(
     repo_url: str,
     repo_name: str,
@@ -299,6 +328,7 @@ def build_evaluation_prompt(
     """
     priorities = _normalize_priorities(priorities)
     priority_names = _format_priority_names(priorities)
+    weighting_instruction = _get_weighting_instruction(priorities)
 
     prompt_parts = []
 
@@ -312,6 +342,7 @@ def build_evaluation_prompt(
         file_tree=json.dumps(file_tree, indent=2),
         findings_context=json.dumps(findings_context, indent=2),
         priority_names=priority_names,
+        weighting_instruction=weighting_instruction,
     ))
 
     # Selected priority modules

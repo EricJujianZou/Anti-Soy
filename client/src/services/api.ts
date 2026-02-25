@@ -197,12 +197,17 @@ export const api = {
  */
 export async function analyzeRepoStream(
   repo_url: string,
+  priorities: string[] | undefined,
   callbacks: StreamCallbacks,
 ): Promise<void> {
+  const body: Record<string, unknown> = { repo_url };
+  if (priorities && priorities.length > 0) {
+    body.priorities = priorities;
+  }
   const res = await fetch(`${API_BASE_URL}/analyze-stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repo_url }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

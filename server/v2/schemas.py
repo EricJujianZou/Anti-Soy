@@ -198,6 +198,10 @@ class InterviewQuestion(BaseModel):
 # REQUEST MODELS
 # =============================================================================
 
+VALID_PRIORITIES = {"code_quality", "security", "originality", "production_readiness", "ai_detection"}
+DEFAULT_PRIORITIES = list(VALID_PRIORITIES)
+
+
 class AnalyzeRequest(BaseModel):
     """Request body for POST /analyze endpoint"""
     repo_url: str = Field(..., description="Full GitHub URL to analyze (e.g., https://github.com/user/repo)")

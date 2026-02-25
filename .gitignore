@@ -372,5 +372,4 @@ yarn.lock
 #claude: 
 
 .claude/
-tasks/
 settings.local.json

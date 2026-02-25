@@ -46,6 +46,8 @@ from v2.schemas import (
     EvaluateRequest,
     EvaluateResponse,
     BusinessValue,
+    VALID_PRIORITIES,
+    DEFAULT_PRIORITIES,
 )
 from prompt_modules import build_evaluation_prompt, build_questions_prompt
 
@@ -306,6 +308,8 @@ def call_gemini_evaluation(
     Returns dict with keys: business_value, standout_features.
     Prompt is assembled from priority modules based on selected priorities.
     """
+    if priorities:
+        logger.info(f"[eval] Priorities received for {repo_url}: {priorities}")
     from google import genai
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -364,6 +368,8 @@ def call_gemini_questions(
     Returns dict with key: interview_questions.
     Prompt is assembled from priority modules based on selected priorities.
     """
+    if priorities:
+        logger.info(f"[questions] Priorities received for {repo_url}: {priorities}")
     from google import genai
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -596,6 +602,15 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
     Falls back gracefully if LLM calls fail — frontend appears errorless.
     """
 
+    # Resolve priorities: filter to valid keys, fall back to all five
+    if body.priorities:
+        priorities = [p for p in body.priorities if p in VALID_PRIORITIES]
+        if not priorities:
+            priorities = DEFAULT_PRIORITIES
+    else:
+        priorities = DEFAULT_PRIORITIES
+    logger.info(f"Priorities for {body.repo_url}: {priorities}")
+
     def generate():
         # 1. Parse and validate URL
         try:
@@ -718,7 +733,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                     repo_url, repo_name,
                     ai_slop_result, bad_practices_result, code_quality_result,
                     extracted_data,
-                    priorities=body.priorities,
+                    priorities=priorities,
                 )
 
                 # 9. Determine rejection status
@@ -749,7 +764,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                     repo_url, repo_name,
                     ai_slop_result, bad_practices_result, code_quality_result,
                     extracted_data,
-                    priorities=body.priorities,
+                    priorities=priorities,
                 )
 
                 questions_list = []
