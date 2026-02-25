@@ -25,16 +25,26 @@ import type {
   EvaluationEvent,
   InterviewQuestion,
 } from "@/services/api";
+import { cn } from "@/utils/utils";
 
 function getRepoName(githubLink: string): string {
   const parts = githubLink.replace(/\/$/, "").split("/");
   return parts[parts.length - 1] || "Unknown";
 }
 
+const PRIORITY_MAP: Record<string, { label: string; sectionId: string }> = {
+  ai_detection: { label: "AI Usage", sectionId: "ai-usage-card" },
+  business_value: { label: "Business Value", sectionId: "business-value-card" },
+  code_quality: { label: "Code Quality", sectionId: "deep-dive-card" },
+  bad_practices: { label: "Bad Practices", sectionId: "deep-dive-card" },
+  interview_questions: { label: "Interview Questions", sectionId: "interview-questions-card" },
+};
+
 const RepoAnalysis = () => {
   const { repoId } = useParams<{ repoId: string }>();
   const [searchParams] = useSearchParams();
   const repoLink = searchParams.get("link");
+  const priorities = searchParams.get("priorities")?.split(",").filter(Boolean) ?? undefined;
 
   const {
     error,
@@ -58,9 +68,9 @@ const RepoAnalysis = () => {
   useEffect(() => {
     if (repoLink && !hasStarted) {
       setHasStarted(true);
-      startStream(repoLink);
+      startStream(repoLink, priorities);
     }
-  }, [repoLink, hasStarted, startStream]);
+  }, [repoLink, hasStarted, startStream, priorities]);
 
   const repoName = repoLink ? getRepoName(repoLink) : repoId || "Unknown";
 
@@ -241,7 +251,7 @@ const RepoAnalysis = () => {
         </div>
 
         {/* ====== SECTION 2: BUSINESS VALUE ====== */}
-        <Card>
+        <Card id="business-value-card" className={cn(priorities?.includes('business_value') && 'glow-amber')}>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">
               Does the Code Back It Up?
@@ -308,7 +318,7 @@ const RepoAnalysis = () => {
 
         {/* ====== SECTION 3: AI USAGE (available immediately) ====== */}
         <Collapsible>
-          <Card>
+          <Card id="ai-usage-card" className={cn(priorities?.includes('ai_detection') && 'glow-amber')}>
             <CollapsibleTrigger asChild>
               <CardHeader className="cursor-pointer hover:bg-muted/30 transition-colors pb-3">
                 <CardTitle className="text-base flex items-center justify-between">
@@ -400,7 +410,7 @@ const RepoAnalysis = () => {
 
         {/* ====== SECTION 4: DEEP DIVE (available immediately) ====== */}
         <Collapsible>
-          <Card>
+          <Card id="deep-dive-card" className={cn((priorities?.includes('code_quality') || priorities?.includes('bad_practices')) && 'glow-amber')}>
             <CollapsibleTrigger asChild>
               <CardHeader className="cursor-pointer hover:bg-muted/30 transition-colors pb-3">
                 <CardTitle className="text-base flex items-center justify-between">
@@ -578,7 +588,7 @@ const RepoAnalysis = () => {
 
         {/* ====== SECTION 5: INTERVIEW QUESTIONS ====== */}
         <Collapsible>
-          <Card>
+          <Card id="interview-questions-card" className={cn(priorities?.includes('interview_questions') && 'glow-amber')}>
             <CollapsibleTrigger asChild>
               <CardHeader className="cursor-pointer hover:bg-muted/30 transition-colors pb-3">
                 <CardTitle className="text-base flex items-center justify-between">
@@ -755,6 +765,18 @@ const RepoAnalysis = () => {
             </a>
           </div>
 
+          {/* Priorities Display */}
+          {priorities && priorities.length > 0 && (
+            <div className="mt-4">
+              <span className="text-xs text-muted-foreground mr-2">Priorities:</span>
+              {priorities.map((p) => (
+                <Badge key={p} variant="secondary" className="mr-1">
+                  {PRIORITY_MAP[p]?.label || p}
+                </Badge>
+              ))}
+            </div>
+          )}
+
           {/* Feedback Button - Only shows when results are ready */}
           {analysis && (
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:block">
@@ -774,5 +796,6 @@ const RepoAnalysis = () => {
     </div>
   );
 };
+
 
 export default RepoAnalysis;

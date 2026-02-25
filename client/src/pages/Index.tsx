@@ -2,7 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useState, useRef } from "react";
 // import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
-import { TerminalInput } from "@/components/TerminalInput";
+import { TerminalInput, type PriorityKey } from "@/components/TerminalInput";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -11,14 +11,18 @@ const Index = () => {
   const [role, setRole] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
 
-  const handleSubmit = (repoUrl: string) => {
+  const handleSubmit = (repoUrl: string, priorities: PriorityKey[]) => {
     // Basic validation for a GitHub URL
     if (repoUrl.includes("github.com")) {
       gtag("event", "analysis_started", {
         event_category: "engagement",
         repo_url: repoUrl,
       });
-      navigate(`/repo/new?link=${encodeURIComponent(repoUrl)}`);
+      const params = new URLSearchParams({
+        link: repoUrl,
+        priorities: priorities.join(","),
+      });
+      navigate(`/repo/new?${params.toString()}`);
     } else {
       alert("Please enter a valid GitHub repository URL.");
     }

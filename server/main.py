@@ -46,7 +46,10 @@ from v2.schemas import (
     EvaluateRequest,
     EvaluateResponse,
     BusinessValue,
+    VALID_PRIORITIES,
+    DEFAULT_PRIORITIES,
 )
+from prompt_modules import build_evaluation_prompt, build_questions_prompt
 
 load_dotenv()
 
@@ -298,11 +301,15 @@ def call_gemini_evaluation(
     bad_practices_result,
     code_quality_result,
     extracted_data,
+    priorities: list[str] | None = None,
 ) -> dict | None:
     """
     LLM Call 1: Business value + standout features.
     Returns dict with keys: business_value, standout_features.
+    Prompt is assembled from priority modules based on selected priorities.
     """
+    if priorities:
+        logger.info(f"[eval] Priorities received for {repo_url}: {priorities}")
     from google import genai
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -314,47 +321,16 @@ def call_gemini_evaluation(
         extracted_data.file_importance.items(), key=lambda x: x[1], reverse=True
     )[:10]]
 
-    prompt = f"""You are a senior technical interviewer evaluating a GitHub project.
-
-REPOSITORY INFO:
-- URL: {repo_url}
-- Name: {repo_name}
-- AI Slop Score: {ai_slop_result.score}/100 (higher = more AI-generated)
-- Bad Practices Score: {bad_practices_result.score}/100 (higher = worse)
-- Code Quality Score: {code_quality_result.score}/100 (higher = better)
-
-FILE STRUCTURE:
-{json.dumps(file_tree, indent=2)}
-
-CODE FINDINGS (with file locations and code snippets):
-{json.dumps(findings_context, indent=2)}
-
-Respond with a JSON object containing TWO parts:
-
-{{
-  "business_value": {{
-    "solves_real_problem": true/false,
-    "project_type": "real_problem" | "tutorial" | "portfolio_demo" | "learning_exercise" | "utility_tool",
-    "project_description": "One sentence describing what this project does",
-    "originality_assessment": "Is this novel or just another to-do app? What makes it unique or generic?",
-    "project_summary": "2-3 sentence executive summary for a hiring manager"
-  }},
-  "standout_features": [
-    "Short punchy headline about something genuinely impressive"
-  ]
-}}
-
-STANDOUT FEATURES INSTRUCTIONS:
-- Return 0-3 short headlines. Most projects will have ZERO — return [] if nothing genuinely stands out.
-- The bar is VERY HIGH. Compare against what's common: GPT wrappers, to-do apps, CRUD APIs, tutorial clones, portfolio demos, summary tools, productivity dashboards, chat apps, weather apps, e-commerce templates.
-- Only include things that would make a startup founder say "this person built something real."
-- Categories to consider (in order of importance):
-  1. SOLVES A REAL USER PROBLEM (most weight): The project addresses a genuine need that isn't already solved by 100 other tools. Evidence of actual users or deployment is a strong signal.
-  2. UNUSUAL TECH CHOICES: Not "uses React" — more like "built custom consensus protocol" or "implemented their own query optimizer."
-  3. BEYOND-MVP ENGINEERING: Not basic error handling or rate limiting — advanced patterns like custom caching strategies, observability pipelines, zero-downtime deployment, sophisticated auth systems.
-- Each headline: 1 short punchy sentence max. Written for a busy founder scanning resumes.
-
-Return ONLY the JSON object, no other text or markdown formatting."""
+    prompt = build_evaluation_prompt(
+        repo_url=repo_url,
+        repo_name=repo_name,
+        ai_slop_result=ai_slop_result,
+        bad_practices_result=bad_practices_result,
+        code_quality_result=code_quality_result,
+        file_tree=file_tree,
+        findings_context=findings_context,
+        priorities=priorities,
+    )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     for attempt in range(2):
@@ -385,11 +361,15 @@ def call_gemini_questions(
     bad_practices_result,
     code_quality_result,
     extracted_data,
+    priorities: list[str] | None = None,
 ) -> dict | None:
     """
     LLM Call 2: Interview questions.
     Returns dict with key: interview_questions.
+    Prompt is assembled from priority modules based on selected priorities.
     """
+    if priorities:
+        logger.info(f"[questions] Priorities received for {repo_url}: {priorities}")
     from google import genai
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -401,53 +381,16 @@ def call_gemini_questions(
         extracted_data.file_importance.items(), key=lambda x: x[1], reverse=True
     )[:10]]
 
-    prompt = f"""You are a senior technical interviewer. Generate interview questions for a candidate about their GitHub project.
-
-REPOSITORY INFO:
-- URL: {repo_url}
-- Name: {repo_name}
-- AI Slop Score: {ai_slop_result.score}/100 (higher = more AI-generated)
-- Bad Practices Score: {bad_practices_result.score}/100 (higher = worse)
-- Code Quality Score: {code_quality_result.score}/100 (higher = better)
-
-FILE STRUCTURE:
-{json.dumps(file_tree, indent=2)}
-
-CODE FINDINGS (with file locations and code snippets):
-{json.dumps(findings_context, indent=2)}
-
-INSTRUCTIONS FOR GENERATING QUESTIONS:
-
-1. Focus only on what is UNIQUE, IMPRESSIVE, or UNUSUAL about this project and its issues. Ignore generic findings.
-2. Questions must require the candidate to EXPLAIN THEIR OWN CODE — not recite textbook answers. The candidate should need to have actually written and understood the code to answer well.
-3. Focus on DESIGN CHOICES and ARCHITECTURE — "why did you build it this way?" not "do you know the right way?"
-4. Do NOT reference specific file paths or line numbers in the question text. Ask naturally, like a human interviewer who has reviewed their code.
-5. Do NOT ask about AI-generated code signals, emojis, or redundant comments.
-
-GOOD QUESTION EXAMPLE:
-"Walk me through how authentication works in your API — specifically, how do you make sure a user is authorized before they can modify data?"
-(This is grounded in a real finding — no auth check before DB writes — but asked naturally.)
-
-BAD QUESTION EXAMPLE:
-"Why do you have print statements instead of proper logging?"
-(This is generic and can be answered by anyone who has read a Python best practices blog.)
-
-Respond with a JSON object:
-
-{{
-  "interview_questions": [
-    {{
-      "question": "Natural interview question (no file:line references)",
-      "based_on": "Which finding this is grounded in",
-      "probes": "What skill this tests (e.g., 'security_awareness', 'system_design')",
-      "category": "business_value" | "design_choice" | "code_issue" | "technical_depth"
-    }}
-  ]
-}}
-
-Generate 3-5 interview questions with a mix of categories. At least 1 business_value, 1 design_choice, and 1 code_issue questions.
-
-Return ONLY the JSON object, no other text or markdown formatting."""
+    prompt = build_questions_prompt(
+        repo_url=repo_url,
+        repo_name=repo_name,
+        ai_slop_result=ai_slop_result,
+        bad_practices_result=bad_practices_result,
+        code_quality_result=code_quality_result,
+        file_tree=file_tree,
+        findings_context=findings_context,
+        priorities=priorities,
+    )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     for attempt in range(2):
@@ -659,6 +602,15 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
     Falls back gracefully if LLM calls fail — frontend appears errorless.
     """
 
+    # Resolve priorities: filter to valid keys, fall back to all five
+    if body.priorities:
+        priorities = [p for p in body.priorities if p in VALID_PRIORITIES]
+        if not priorities:
+            priorities = DEFAULT_PRIORITIES
+    else:
+        priorities = DEFAULT_PRIORITIES
+    logger.info(f"Priorities for {body.repo_url}: {priorities}")
+
     def generate():
         # 1. Parse and validate URL
         try:
@@ -781,6 +733,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                     repo_url, repo_name,
                     ai_slop_result, bad_practices_result, code_quality_result,
                     extracted_data,
+                    priorities=priorities,
                 )
 
                 # 9. Determine rejection status
@@ -811,6 +764,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                     repo_url, repo_name,
                     ai_slop_result, bad_practices_result, code_quality_result,
                     extracted_data,
+                    priorities=priorities,
                 )
 
                 questions_list = []

@@ -368,3 +368,8 @@ yarn.lock
 *.db
 *.db-wal
 *.db-shm
+
+#claude: 
+
+.claude/
+settings.local.json

@@ -303,6 +303,10 @@ class CodeQualityAnalyzer:
             "jest.config.js", "jest.config.ts", "jest.config.json",
             "vitest.config.ts", "vitest.config.js",
             "karma.conf.js", ".mocharc.js", ".mocharc.json",
+            # Go: go.mod implies go test support
+            "go.mod",
+            # C#: test project files
+            ".csproj",
         ]
         
         has_test_config = any(
@@ -448,7 +452,7 @@ class CodeQualityAnalyzer:
                 has_try = "try:" in content
                 if has_try:
                     files_with_error_handling += 1
-                    
+
                     # Check for specific exceptions (good)
                     specific_except = re.search(
                         r"except\s+(?:[\w.]+(?:\s*,\s*[\w.]+)*|\([\w.\s,]+\))\s*(?:as\s+\w+)?:",
@@ -456,7 +460,7 @@ class CodeQualityAnalyzer:
                     )
                     if specific_except:
                         good_error_handling += 1
-                    
+
                     # Find bare excepts with line numbers and snippets
                     for match in re.finditer(r"except\s*:", content):
                         line_num = content[:match.start()].count("\n") + 1
@@ -467,16 +471,38 @@ class CodeQualityAnalyzer:
                         if len(snippet) > 200:
                             snippet = snippet[:200] + "..."
                         bare_except_occurrences.append((file_path, line_num, snippet))
-            
+
             # JavaScript/TypeScript error handling
             elif file_path.endswith((".js", ".ts", ".jsx", ".tsx")):
                 has_try = "try {" in content or "try{" in content
                 if has_try:
                     files_with_error_handling += 1
-                    
+
                     # Check for non-empty catch
                     catch_with_body = re.search(r"catch\s*\([^)]+\)\s*\{[^}]+\}", content)
                     if catch_with_body:
+                        good_error_handling += 1
+
+            # Go error handling (uses if err != nil, NOT try/catch)
+            elif file_path.endswith(".go"):
+                has_err_check = "if err != nil" in content or "if err != nil {" in content
+                if has_err_check:
+                    files_with_error_handling += 1
+                    # Go idiomatic error handling is always "good"
+                    good_error_handling += 1
+
+            # C# error handling
+            elif file_path.endswith(".cs"):
+                has_try = "try" in content and "catch" in content
+                if has_try:
+                    files_with_error_handling += 1
+
+                    # Check for specific exception types (good)
+                    specific_catch = re.search(
+                        r"catch\s*\(\s*(?!Exception\s)(\w+Exception|\w+Error)\s",
+                        content
+                    )
+                    if specific_catch:
                         good_error_handling += 1
         
         if total_files == 0:
@@ -573,7 +599,7 @@ class CodeQualityAnalyzer:
                 if re.search(r"import.*(?:winston|pino|bunyan|log4js|logger)", content, re.IGNORECASE):
                     has_logging_import = True
                     uses_logging = True
-                
+
                 # Count console.log (excluding commented)
                 for line in content.split("\n"):
                     stripped = line.strip()
@@ -581,6 +607,34 @@ class CodeQualityAnalyzer:
                         continue
                     if "console.log(" in line:
                         console_log_count += 1
+
+            # Go
+            elif file_path.endswith(".go"):
+                if '"log"' in content or '"log/slog"' in content or "logrus" in content or "zap" in content:
+                    has_logging_import = True
+                if re.search(r"(?:log|logger|slog)\.\w+\(", content):
+                    uses_logging = True
+                # Count fmt.Print (Go equivalent of print statements)
+                for line in content.split("\n"):
+                    stripped = line.strip()
+                    if stripped.startswith("//"):
+                        continue
+                    if re.search(r"fmt\.Print(?:ln|f)?\s*\(", line):
+                        print_count += 1
+
+            # C#
+            elif file_path.endswith(".cs"):
+                if re.search(r"(?:ILogger|ILoggerFactory|using.*(?:Serilog|NLog|log4net|Microsoft\.Extensions\.Logging))", content):
+                    has_logging_import = True
+                if re.search(r"(?:_?logger|_?log)\.\w+\(", content):
+                    uses_logging = True
+                # Count Console.Write (C# equivalent of print statements)
+                for line in content.split("\n"):
+                    stripped = line.strip()
+                    if stripped.startswith("//"):
+                        continue
+                    if "Console.Write" in line:
+                        print_count += 1
         
         if total_code_files == 0:
             return 50, findings
@@ -646,6 +700,7 @@ class CodeQualityAnalyzer:
             "pom.xml": False,
             "build.gradle": False,
             "composer.json": False,
+            ".csproj": False,
         }
         
         # Check for lock files
@@ -660,6 +715,7 @@ class CodeQualityAnalyzer:
             "pom.xml": [],
             "build.gradle": ["gradle.lockfile"],
             "composer.json": ["composer.lock"],
+            # C# uses packages.lock.json but it's optional
         }
         
         found_dep_files = []
@@ -667,12 +723,12 @@ class CodeQualityAnalyzer:
         
         for path in tree:
             filename = Path(path).name
-            
+
             for dep_file in dep_files:
-                if filename == dep_file:
+                if filename == dep_file or (dep_file == ".csproj" and filename.endswith(".csproj")):
                     dep_files[dep_file] = True
                     found_dep_files.append(dep_file)
-            
+
             for dep_file, locks in lock_files.items():
                 if filename in locks:
                     found_lock_files.append(filename)

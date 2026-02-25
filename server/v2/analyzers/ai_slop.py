@@ -142,6 +142,52 @@ REDUNDANT_COMMENT_PATTERNS = [
      "Comment describes obvious import"),
 ]
 
+# Go redundant comment patterns (// style comments)
+GO_REDUNDANT_COMMENT_PATTERNS = [
+    # Loop comments
+    (r'//\s*(?:loop|iterate|iterating).*(?:through|over|the).*\n\s*for\s',
+     "Comment describes obvious loop"),
+
+    # Return comments
+    (r'//\s*(?:return|returns?)(?:\s+the)?(?:\s+\w+){0,3}\s*\n\s*return\s',
+     "Comment describes obvious return statement"),
+
+    # Assignment comments
+    (r'//\s*(?:initialize|init|set|create|declare).*(?:variable|var|value).*\n\s*(?:\w+\s*:=|var\s)',
+     "Comment describes obvious variable declaration"),
+
+    # Conditional comments
+    (r'//\s*(?:check|if|whether).*\n\s*if\s',
+     "Comment describes obvious conditional"),
+
+    # Function call comments
+    (r'//\s*(?:call|invoke|execute).*(?:function|method).*\n\s*\w+\(',
+     "Comment describes obvious function call"),
+]
+
+# C# redundant comment patterns
+CS_REDUNDANT_COMMENT_PATTERNS = [
+    # Loop comments
+    (r'//\s*(?:loop|iterate|iterating).*(?:through|over|the).*\n\s*(?:for|foreach)\s',
+     "Comment describes obvious loop"),
+
+    # Return comments
+    (r'//\s*(?:return|returns?)(?:\s+the)?(?:\s+\w+){0,3}\s*\n\s*return\s',
+     "Comment describes obvious return statement"),
+
+    # Assignment comments
+    (r'//\s*(?:initialize|init|set|create|declare).*(?:variable|var|value).*\n\s*(?:var|int|string|bool|double|float|List|Dictionary)\s',
+     "Comment describes obvious variable declaration"),
+
+    # Conditional comments
+    (r'//\s*(?:check|if|whether).*\n\s*if\s*\(',
+     "Comment describes obvious conditional"),
+
+    # Function call comments
+    (r'//\s*(?:call|invoke|execute).*(?:function|method).*\n\s*(?:await\s+)?\w+\(',
+     "Comment describes obvious function call"),
+]
+
 # JavaScript/TypeScript redundant patterns
 JS_REDUNDANT_COMMENT_PATTERNS = [
     # Loop comments
@@ -274,6 +320,10 @@ class AISlopAnalyzer:
                 patterns = REDUNDANT_COMMENT_PATTERNS
             elif file_path.endswith(('.js', '.ts', '.jsx', '.tsx')):
                 patterns = JS_REDUNDANT_COMMENT_PATTERNS
+            elif file_path.endswith('.go'):
+                patterns = GO_REDUNDANT_COMMENT_PATTERNS
+            elif file_path.endswith('.cs'):
+                patterns = CS_REDUNDANT_COMMENT_PATTERNS
             else:
                 # Use Python patterns as fallback (# comments work in many languages)
                 patterns = REDUNDANT_COMMENT_PATTERNS

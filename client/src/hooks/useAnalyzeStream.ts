@@ -30,13 +30,13 @@ export function useAnalyzeStream() {
   const [state, setState] = useState<StreamState>(initialState);
   const streamingRef = useRef(false);
 
-  const startStream = useCallback((repoUrl: string) => {
+  const startStream = useCallback((repoUrl: string, priorities?: string[]) => {
     if (streamingRef.current) return;
     streamingRef.current = true;
 
     setState({ ...initialState, isStreaming: true });
 
-    analyzeRepoStream(repoUrl, {
+    analyzeRepoStream(repoUrl, priorities, {
       onAnalysis: (data) => {
         setState((prev) => ({ ...prev, analysis: data }));
       },
