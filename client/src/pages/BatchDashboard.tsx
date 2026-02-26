@@ -5,12 +5,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/utils/utils";
 import { Loader2, CheckCircle2, XCircle, ExternalLink, Building2 } from "lucide-react";
-import type { BatchItemStatus } from "@/services/batchApi";
+import type { BatchItemStatus, BatchVerdict } from "@/services/batchApi";
 
-const VerdictBadge = ({ verdict }: { verdict: string | null | undefined }) => {
+const VerdictBadge = ({ verdict }: { verdict: BatchVerdict | string | null | undefined }) => {
   if (!verdict) return null;
 
-  const verdictLower = verdict.toLowerCase();
+  // Handle both object {type, confidence} and plain string formats
+  const verdictText = typeof verdict === "string" ? verdict : verdict.type;
+  if (!verdictText || typeof verdictText !== "string") return null;
+
+  const verdictLower = verdictText.toLowerCase();
   let colorClass = "bg-muted text-muted-foreground border-muted-foreground/20";
   
   if (verdictLower.includes("slop")) {
@@ -25,7 +29,7 @@ const VerdictBadge = ({ verdict }: { verdict: string | null | undefined }) => {
 
   return (
     <Badge variant="outline" className={cn("uppercase tracking-widest text-[10px] font-bold px-2 py-0.5", colorClass)}>
-      {verdict}
+      {verdictText}
     </Badge>
   );
 };
@@ -208,8 +212,8 @@ const BatchDashboard = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {data?.items.map((item) => (
-              <CandidateCard key={item.item_id} item={item} batchPriorities={priorities} />
+            {data?.items.map((item, index) => (
+              <CandidateCard key={item.id ?? `item-${index}`} item={item} batchPriorities={priorities} />
             ))}
           </div>
         )}

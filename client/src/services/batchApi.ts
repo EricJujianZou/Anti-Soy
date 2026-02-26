@@ -2,15 +2,22 @@ const rawBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const API_BASE_URL = rawBaseUrl.replace(/\/+$/, "");
 import type { PriorityKey } from "./api";
 
+export interface BatchVerdict {
+  type: string;
+  confidence: number;
+}
+
 export interface BatchItemStatus {
-  item_id: string;
+  id: number;
+  position: number;
   filename: string;
   candidate_name?: string | null;
+  candidate_university?: string | null;
   repo_url?: string | null;
   status: "pending" | "running" | "completed" | "error";
   error_message?: string | null;
   repo_id?: number | null;
-  verdict?: string | null;
+  verdict?: BatchVerdict | null;
   standout_features?: string[];
 }
 

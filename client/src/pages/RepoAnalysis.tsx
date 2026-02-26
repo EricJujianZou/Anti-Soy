@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useParams, useSearchParams, Link } from "react-router-dom";
+import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
 // import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
 import { ProgressTracker } from "@/components/ProgressTracker";
@@ -43,6 +43,7 @@ const PRIORITY_MAP: Record<string, { label: string; sectionId: string }> = {
 
 const RepoAnalysis = () => {
   const { repoId } = useParams<{ repoId: string }>();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const repoLink = searchParams.get("link");
   const priorities = searchParams.get("priorities")?.split(",").filter(Boolean) ?? undefined;
@@ -761,51 +762,53 @@ const RepoAnalysis = () => {
     <div>
       <Header />
       <main className="container mx-auto px-4 py-12">
-        <div className="relative flex items-center justify-between mb-8">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <Link
-                to="/"
-                className="text-muted-foreground hover:text-foreground transition-colors text-sm"
+        <div className="mb-8 space-y-4">
+          <div className="relative flex items-start gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <button
+                  onClick={() => navigate(-1)}
+                  className="text-muted-foreground hover:text-foreground transition-colors text-sm"
+                >
+                  ← Back
+                </button>
+                <span className="text-muted-foreground">/</span>
+                <h1 className="text-2xl font-bold text-foreground">
+                  <span className="text-primary text-glow">{repoName}</span>
+                </h1>
+              </div>
+              <a
+                href={repoLink || analysis?.repo.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-muted-foreground hover:text-primary transition-colors max-w-2xl break-all"
               >
-                ← Home
-              </Link>
-              <span className="text-muted-foreground">/</span>
-              <h1 className="text-2xl font-bold text-foreground">
-                <span className="text-primary text-glow">{repoName}</span>
-              </h1>
+                {repoLink || analysis?.repo.url}
+              </a>
             </div>
-            <a
-              href={repoLink || analysis?.repo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-muted-foreground hover:text-primary transition-colors max-w-2xl break-all"
-            >
-              {repoLink || analysis?.repo.url}
-            </a>
+
+            {/* Feedback Button - centered, only shows when results are ready */}
+            {analysis && (
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:block">
+                <button
+                  onClick={scrollToFeedback}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-primary/20 transition-all hover:scale-105 whitespace-nowrap"
+                >
+                  Give Feedback
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Priorities Display */}
           {priorities && priorities.length > 0 && (
-            <div className="mt-4">
-              <span className="text-xs text-muted-foreground mr-2">Priorities:</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground mr-1">Priorities:</span>
               {priorities.map((p) => (
-                <Badge key={p} variant="secondary" className="mr-1">
+                <Badge key={p} variant="secondary">
                   {PRIORITY_MAP[p]?.label || p}
                 </Badge>
               ))}
-            </div>
-          )}
-
-          {/* Feedback Button - Only shows when results are ready */}
-          {analysis && (
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:block">
-              <button
-                onClick={scrollToFeedback}
-                className="bg-primary hover:bg-primary/90 text-primary-foreground px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-primary/20 transition-all hover:scale-105"
-              >
-                Give Feedback
-              </button>
             </div>
           )}
         </div>

@@ -284,6 +284,7 @@ class BatchItemStatus(BaseModel):
     filename: str
     candidate_name: str
     candidate_university: str | None
+    repo_url: str | None
     status: str  # "pending" | "running" | "completed" | "error"
     error_message: str | None
     repo_id: int | None
