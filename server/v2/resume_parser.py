@@ -7,7 +7,9 @@ resume_parser.py is currently planned to support .pdf and .docx files
 import pymupdf
 import docx
 import json
+import re
 from pathlib import Path
+from dataclasses import dataclass
 
 PARENT_DIRECTORY = Path(__file__).parent
 
@@ -15,6 +17,13 @@ PARENT_DIRECTORY = Path(__file__).parent
 GITHUB_USERNAME_BLACKLIST = []
 with open(f"{PARENT_DIRECTORY}/github_username_blacklist.json", "r") as f:
     GITHUB_USERNAME_BLACKLIST = json.load(f)
+
+@dataclass
+class CandidateInfo:
+    name: str              # first non-empty line of plaintext
+    university: str | None # regex match, None if not found
+    github_profile_url: str | None  # from existing GithubFromResumeDump, None if raises
+    project_names: list[str]        # extracted from Projects section, may be empty
 
 class struct_resume_dump:
     def __str__(self):
@@ -165,6 +174,74 @@ def GithubFromResumeDump(resume_dump: struct_resume_dump) -> str:
 def ProfileFromResume(resume_path: str) -> str:
     resume_dump = GeneralExtractor(resume_path)
     return GithubFromResumeDump(resume_dump)
+    
+def ExtractCandidateInfo(resume_dump: struct_resume_dump) -> CandidateInfo:
+    # 1. Name: first non-empty, non-whitespace line
+    name = "Unknown Candidate"
+    for line in resume_dump.plaintext.split("\n"):
+        if line.strip():
+            name = line.strip()
+            break
+            
+    # 2. University: regex scan
+    university = None
+    uni_patterns = [
+        r"University of [\w\s]+",
+        r"[\w\s]+ University",
+        r"[\w\s]+ College",
+        r"[\w\s]+ Institute of Technology",
+        r"\bMIT\b",
+        r"\bETH\b",
+        r"\bStanford\b",
+        r"\bHarvard\b",
+        r"\bBerkeley\b",
+    ]
+    for pattern in uni_patterns:
+        match = re.search(pattern, resume_dump.plaintext, re.IGNORECASE)
+        if match:
+            university = match.group(0).strip()
+            break
+            
+    # 3. GitHub Profile URL
+    github_profile_url = None
+    try:
+        github_profile_url = GithubFromResumeDump(resume_dump)
+    except ResumeParseException:
+        pass
+        
+    # 4. Project Names
+    project_names = []
+    lines = resume_dump.plaintext.split("\n")
+    projects_found = False
+    for i, line in enumerate(lines):
+        if not projects_found:
+            if re.search(r"\bprojects?\b", line, re.IGNORECASE):
+                projects_found = True
+        else:
+            # Look for project titles in subsequent lines
+            stripped = line.strip()
+            if not stripped:
+                continue
+            
+            # Heuristic for project title: short lines, ≤6 words, not all lowercase, before next section
+            # Check if it looks like a section header (all caps or common keywords)
+            if re.match(r"^(EDUCATION|EXPERIENCE|SKILLS|LANGUAGES|AWARDS|CERTIFICATIONS|VOLUNTEERING)$", stripped, re.IGNORECASE):
+                break
+                
+            words = stripped.split()
+            if len(words) <= 6 and not stripped.islower():
+                project_names.append(stripped)
+            
+            # Stop if we have a few projects or if we've gone too far
+            if len(project_names) >= 5:
+                break
+                
+    return CandidateInfo(
+        name=name,
+        university=university,
+        github_profile_url=github_profile_url,
+        project_names=project_names
+    )
     
 
 
