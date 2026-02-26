@@ -65,6 +65,45 @@ export const TerminalInput = ({
 
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-2xl">
+      {/* Upload Resumes — prominent CTA */}
+      {(secondaryAction || onSecondaryAction) && (
+        <div className="mb-6">
+          {onSecondaryAction ? (
+            <button
+              type="button"
+              onClick={() => onSecondaryAction(prioritiesArray())}
+              className={cn(
+                "w-full border-2 border-primary/70 bg-primary/5 backdrop-blur-sm",
+                "py-5 px-6 text-center",
+                "uppercase tracking-widest text-sm font-bold text-primary",
+                "transition-all duration-300",
+                "hover:bg-primary/15 hover:border-primary hover:glow-amber",
+                "relative group"
+              )}
+            >
+              <span className="absolute -top-px -left-px text-primary text-sm">┌</span>
+              <span className="absolute -top-px -right-px text-primary text-sm">┐</span>
+              <span className="absolute -bottom-px -left-px text-primary text-sm">└</span>
+              <span className="absolute -bottom-px -right-px text-primary text-sm">┘</span>
+              <span className="flex items-center justify-center gap-2">
+                Upload Candidate Resumes
+              </span>
+              <span className="block text-[10px] text-muted-foreground font-normal mt-1 tracking-wider normal-case">
+                Batch analyze up to 10 resumes at once
+              </span>
+            </button>
+          ) : (
+            secondaryAction
+          )}
+
+          <div className="flex items-center gap-3 my-4">
+            <div className="flex-1 border-t border-border/50" />
+            <span className="text-xs text-muted-foreground uppercase tracking-widest">or paste a github url</span>
+            <div className="flex-1 border-t border-border/50" />
+          </div>
+        </div>
+      )}
+
       <div className={cn(
         "relative border bg-card/80 backdrop-blur-sm transition-all duration-300",
         isFocused ? "border-primary glow-amber" : "border-border",
@@ -117,22 +156,6 @@ export const TerminalInput = ({
           </label>
         ))}
       </div>
-
-      {(secondaryAction || onSecondaryAction) && (
-        <div className="mt-4 flex justify-center">
-          {onSecondaryAction ? (
-            <button
-              type="button"
-              onClick={() => onSecondaryAction(prioritiesArray())}
-              className="w-3/5 border border-border bg-transparent text-muted-foreground py-2 px-6 uppercase tracking-widest text-[10px] font-medium hover:border-primary/50 hover:text-primary transition-all duration-300"
-            >
-              Upload Candidate Resumes
-            </button>
-          ) : (
-            secondaryAction
-          )}
-        </div>
-      )}
 
       <div className="flex justify-center mt-4">
         <button
