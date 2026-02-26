@@ -80,6 +80,9 @@ const Index = () => {
               { label: "GPT Wrapper", url: "https://github.com/EricJujianZou/PromptAssist" },
               { label: "Algorithm", url: "https://github.com/Skullheadx/The-Traveling-Salesman-Problem" },
             ]}
+            onSecondaryAction={(priorities) => {
+              navigate(`/upload?priorities=${priorities.join(",")}`);
+            }}
           />
 
           {/* Join Waitlist CTA */}

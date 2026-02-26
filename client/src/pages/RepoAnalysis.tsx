@@ -20,10 +20,11 @@ import {
   FileCode,
   Loader2,
 } from "lucide-react";
-import type {
+import {
   AnalysisResponse,
   EvaluationEvent,
   InterviewQuestion,
+  api,
 } from "@/services/api";
 import { cn } from "@/utils/utils";
 
@@ -47,19 +48,26 @@ const RepoAnalysis = () => {
   const priorities = searchParams.get("priorities")?.split(",").filter(Boolean) ?? undefined;
 
   const {
-    error,
-    analysis,
+    error: streamError,
+    analysis: streamAnalysis,
     evaluation,
     questions,
     questionsError,
     startStream,
   } = useAnalyzeStream();
 
+  const [manualAnalysis, setManualAnalysis] = useState<AnalysisResponse | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [isManualLoading, setIsManualLoading] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
+  
   const [feedbackStatus, setFeedbackStatus] = useState<
     "idle" | "submitting" | "success" | "error"
   >("idle");
   const feedbackRef = useRef<HTMLDivElement>(null);
+
+  const analysis = streamAnalysis || manualAnalysis;
+  const error = streamError || manualError;
 
   const scrollToFeedback = () => {
     feedbackRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -69,12 +77,24 @@ const RepoAnalysis = () => {
     if (repoLink && !hasStarted) {
       setHasStarted(true);
       startStream(repoLink, priorities);
+    } else if (!repoLink && repoId && repoId !== "new" && !hasStarted) {
+      setHasStarted(true);
+      setIsManualLoading(true);
+      api.getRepoAnalysis(repoId)
+        .then(data => {
+          setManualAnalysis(data);
+          setIsManualLoading(false);
+        })
+        .catch(err => {
+          setManualError(err instanceof Error ? err.message : "Failed to fetch analysis");
+          setIsManualLoading(false);
+        });
     }
-  }, [repoLink, hasStarted, startStream, priorities]);
+  }, [repoLink, repoId, hasStarted, startStream, priorities]);
 
-  const repoName = repoLink ? getRepoName(repoLink) : repoId || "Unknown";
+  const repoName = repoLink ? getRepoName(repoLink) : analysis?.repo.name || repoId || "Unknown";
 
-  if (!repoLink) {
+  if (!repoLink && (!repoId || repoId === "new")) {
     return (
       <div>
         <Header />
@@ -97,16 +117,17 @@ const RepoAnalysis = () => {
     <div className="flex flex-col items-center justify-center min-h-[70vh] animate-fade-in-up">
       <div className="text-center mb-8">
         <h2 className="text-2xl font-bold text-foreground mb-2">
-          Analyzing <span className="text-primary">{repoName}</span>
+          {isManualLoading ? "Fetching Report" : "Analyzing"} <span className="text-primary">{repoName}</span>
         </h2>
         <p className="text-sm text-muted-foreground">
-          Running deeper metrics and signal checks...
+          {isManualLoading ? "Retrieving cached analysis results..." : "Running deeper metrics and signal checks..."}
         </p>
         {error && (
           <p className="text-sm text-red-500 mt-2">Error: {error}</p>
         )}
       </div>
-      <ProgressTracker steps={[]} className="w-full max-w-md" />
+      {!isManualLoading && <ProgressTracker steps={[]} className="w-full max-w-md" />}
+      {isManualLoading && <Loader2 className="w-8 h-8 text-primary animate-spin" />}
     </div>
   );
 
@@ -149,7 +170,6 @@ const RepoAnalysis = () => {
       evaluation?.standout_features?.filter((f) => f.trim()) ?? [];
     const hasStandout = standoutFeatures.length > 0;
     const evalLoaded = evaluation !== null;
-    const questionsLoaded = questions !== null;
 
     return (
       <div className="animate-fade-in-up space-y-6 max-w-3xl mx-auto">
@@ -595,7 +615,7 @@ const RepoAnalysis = () => {
                   <span className="flex items-center gap-2">
                     <MessageSquare className="h-4 w-4" />
                     Interview Questions
-                    {questionsLoaded && questions.length > 0 && (
+                    {questions && questions.length > 0 && (
                       <Badge variant="outline">{questions.length}</Badge>
                     )}
                   </span>
@@ -605,7 +625,7 @@ const RepoAnalysis = () => {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <CardContent className="space-y-3">
-                {!questionsLoaded ? (
+                {!questions ? (
                   <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     <span className="text-sm">
@@ -756,12 +776,12 @@ const RepoAnalysis = () => {
               </h1>
             </div>
             <a
-              href={repoLink}
+              href={repoLink || analysis?.repo.url}
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-muted-foreground hover:text-primary transition-colors max-w-2xl break-all"
             >
-              {repoLink}
+              {repoLink || analysis?.repo.url}
             </a>
           </div>
 

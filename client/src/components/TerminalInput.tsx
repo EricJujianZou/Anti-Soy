@@ -1,16 +1,7 @@
 import { useState, useRef } from "react";
 import { cn } from "@/utils/utils";
 import { Checkbox } from "@/components/ui/checkbox";
-
-export type PriorityKey = "code_quality" | "security" | "originality" | "production_readiness" | "ai_detection";
-
-const PRIORITY_OPTIONS: { key: PriorityKey; label: string }[] = [
-  { key: "code_quality", label: "Code Quality" },
-  { key: "security", label: "Security" },
-  { key: "originality", label: "Originality" },
-  { key: "production_readiness", label: "Production Readiness" },
-  { key: "ai_detection", label: "AI Detection" },
-];
+import { PRIORITY_OPTIONS, type PriorityKey } from "@/services/api";
 
 interface Example {
   label: string;
@@ -22,6 +13,8 @@ interface TerminalInputProps {
   placeholder?: string;
   isLoading?: boolean;
   examples?: Example[];
+  secondaryAction?: React.ReactNode;
+  onSecondaryAction?: (priorities: PriorityKey[]) => void;
 }
 
 export const TerminalInput = ({
@@ -29,6 +22,8 @@ export const TerminalInput = ({
   placeholder = "github_repository_url",
   isLoading = false,
   examples,
+  secondaryAction,
+  onSecondaryAction,
 }: TerminalInputProps) => {
   const [value, setValue] = useState("");
   const [isFocused, setIsFocused] = useState(false);
@@ -122,6 +117,22 @@ export const TerminalInput = ({
           </label>
         ))}
       </div>
+
+      {(secondaryAction || onSecondaryAction) && (
+        <div className="mt-4 flex justify-center">
+          {onSecondaryAction ? (
+            <button
+              type="button"
+              onClick={() => onSecondaryAction(prioritiesArray())}
+              className="w-3/5 border border-border bg-transparent text-muted-foreground py-2 px-6 uppercase tracking-widest text-[10px] font-medium hover:border-primary/50 hover:text-primary transition-all duration-300"
+            >
+              Upload Candidate Resumes
+            </button>
+          ) : (
+            secondaryAction
+          )}
+        </div>
+      )}
 
       <div className="flex justify-center mt-4">
         <button

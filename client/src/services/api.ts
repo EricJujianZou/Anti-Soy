@@ -124,6 +124,16 @@ export interface EvaluateResponse {
   interview_questions: InterviewQuestion[];
 }
 
+export type PriorityKey = "code_quality" | "security" | "originality" | "production_readiness" | "ai_detection";
+
+export const PRIORITY_OPTIONS: { key: PriorityKey; label: string }[] = [
+  { key: "code_quality", label: "Code Quality" },
+  { key: "security", label: "Security" },
+  { key: "originality", label: "Originality" },
+  { key: "production_readiness", label: "Production Readiness" },
+  { key: "ai_detection", label: "AI Detection" },
+];
+
 
 // =============================================================================
 // SSE STREAMING TYPES
@@ -184,6 +194,18 @@ export const api = {
     });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: 'Failed to evaluate repo' }));
+      throw new Error(error.detail);
+    }
+    return res.json();
+  },
+
+  /**
+   * Fetches an existing repository analysis by ID.
+   */
+  getRepoAnalysis: async (repo_id: string): Promise<AnalysisResponse> => {
+    const res = await fetch(`${API_BASE_URL}/repo/${repo_id}`);
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: 'Failed to fetch analysis' }));
       throw new Error(error.detail);
     }
     return res.json();
