@@ -2,10 +2,11 @@
 SQLAlchemy models for Anti-Soy Candidate Analysis Platform (V2)
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import uuid
 
 Base = declarative_base()
 
@@ -42,6 +43,7 @@ class Repo(Base):
     user = relationship("User", back_populates="repos")
     repo_analysis = relationship("RepoAnalysis", back_populates="repo", uselist=False, cascade="all, delete-orphan")
     repo_evaluation = relationship("RepoEvaluation", back_populates="repo", uselist=False, cascade="all, delete-orphan")
+    batch_items = relationship("BatchItem", back_populates="repo")
 
     def __repr__(self):
         return f"<Repo(id={self.id}, github_link='{self.github_link}', stars={self.stars})>"
@@ -108,3 +110,48 @@ class RepoEvaluation(Base):
 
     def __repr__(self):
         return f"<RepoEvaluation(id={self.id}, repo_id={self.repo_id}, rejected={bool(self.is_rejected)})>"
+
+
+class BatchJob(Base):
+    """Batch job model representing a set of files to be processed"""
+    __tablename__ = "batch_jobs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    total_items = Column(Integer, nullable=False)
+    status = Column(String, default="pending", nullable=False)  # "pending" | "running" | "completed"
+    priorities = Column(Text) # Store as JSON array
+
+    # Relationship to batch items
+    items = relationship("BatchItem", back_populates="batch_job", cascade="all, delete-orphan", order_by="BatchItem.position")
+
+    def __repr__(self):
+        return f"<BatchJob(id='{self.id}', status='{self.status}', total_items={self.total_items})>"
+
+
+class BatchItem(Base):
+    """Individual item within a batch job"""
+    __tablename__ = "batch_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    batch_job_id = Column(String, ForeignKey("batch_jobs.id", ondelete="CASCADE"), nullable=False)
+    position = Column(Integer, nullable=False)
+    filename = Column(String, nullable=False)
+    candidate_name = Column(String)
+    candidate_university = Column(String)
+    github_profile_url = Column(String)
+    repo_url = Column(String)
+    status = Column(String, default="pending", nullable=False)  # "pending" | "running" | "completed" | "error"
+    error_message = Column(Text)
+    file_bytes = Column(LargeBinary)
+    file_ext = Column(String) # .pdf or .docx
+    repo_id = Column(Integer, ForeignKey("repos.id", ondelete="SET NULL"))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime)
+
+    # Relationships
+    batch_job = relationship("BatchJob", back_populates="items")
+    repo = relationship("Repo", back_populates="batch_items")
+
+    def __repr__(self):
+        return f"<BatchItem(id={self.id}, batch_job_id='{self.batch_job_id}', status='{self.status}')>"

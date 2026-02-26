@@ -271,3 +271,37 @@ class EvaluateResponse(BaseModel):
         default_factory=list,
         description="5-7 interview questions covering business_value, design_choice, code_issue, and technical_depth"
     )
+
+
+# =============================================================================
+# BATCH JOB SCHEMAS
+# =============================================================================
+
+class BatchItemStatus(BaseModel):
+    """Status of an individual item within a batch job"""
+    id: int
+    position: int
+    filename: str
+    candidate_name: str
+    candidate_university: str | None
+    repo_url: str | None
+    status: str  # "pending" | "running" | "completed" | "error"
+    error_message: str | None
+    repo_id: int | None
+    verdict: Verdict | None
+    standout_features: list[str] = Field(default_factory=list)
+
+
+class BatchStatusResponse(BaseModel):
+    """Response for GET /batch/{batch_id}/status"""
+    batch_id: str
+    created_at: datetime
+    total_items: int
+    completed_items: int
+    status: str  # "pending" | "running" | "completed"
+    items: list[BatchItemStatus]
+
+
+class BatchUploadResponse(BaseModel):
+    """Response for POST /batch/upload"""
+    batch_id: str
