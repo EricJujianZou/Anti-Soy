@@ -11,6 +11,7 @@ import re
 import subprocess
 import tempfile
 import time
+import asyncio
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from logging_config import setup_logging
 setup_logging()
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -31,7 +32,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-from models import Base, User, Repo, RepoAnalysis, RepoEvaluation
+from models import Base, User, Repo, RepoAnalysis, RepoEvaluation, BatchJob, BatchItem
 
 # V2 imports
 from v2.data_extractor import extract_repo_data
@@ -46,10 +47,23 @@ from v2.schemas import (
     EvaluateRequest,
     EvaluateResponse,
     BusinessValue,
+    BatchStatusResponse,
+    BatchItemStatus,
+    BatchUploadResponse,
     VALID_PRIORITIES,
     DEFAULT_PRIORITIES,
 )
 from prompt_modules import build_evaluation_prompt, build_questions_prompt
+from v2.batch_processor import process_batch
+from v2.analysis_service import (
+    compute_verdict, 
+    save_analysis_results, 
+    save_evaluation_results, 
+    run_analysis_pipeline, 
+    run_evaluation_pipeline,
+    get_or_create_user,
+    get_or_create_repo
+)
 
 load_dotenv()
 
@@ -118,66 +132,6 @@ app.add_middleware(
 
 
 # =============================================================================
-# VERDICT LOGIC
-# =============================================================================
-
-def compute_verdict(ai_score: int, bad_practices_score: int, quality_score: int) -> Verdict:
-    """
-    Compute verdict based on analyzer scores.
-    
-    All cases are explicitly covered (no default fallback):
-    
-    | AI Score | Bad Practices | Quality | Verdict |
-    |----------|---------------|---------|---------|
-    | ≥60      | ≥50           | <50     | Slop Coder |
-    | ≥60      | <50           | ≥50     | Good AI Coder |
-    | <60      | <50           | ≥50     | Senior |
-    | <60      | ≥50           | <50     | Junior |
-    
-    Edge cases (mixed signals) → closest match based on primary signal (AI score)
-    """
-    # High AI usage (≥60)
-    if ai_score >= 60:
-        if bad_practices_score >= 50 and quality_score < 50:
-            # Slop Coder: High AI + sloppy code + low quality
-            confidence = min(100, 60 + (ai_score - 60) // 2 + (bad_practices_score - 50) // 2 + (50 - quality_score) // 2)
-            return Verdict(type="Slop Coder", confidence=confidence)
-        elif bad_practices_score < 50 and quality_score >= 50:
-            # Good AI Coder: High AI + clean code + good quality
-            confidence = min(100, 60 + (ai_score - 60) // 3 + (50 - bad_practices_score) // 3 + (quality_score - 50) // 3)
-            return Verdict(type="Good AI Coder", confidence=confidence)
-        else:
-            # Edge case: High AI but mixed signals
-            # If quality is high, lean toward Good AI Coder; otherwise Slop Coder
-            if quality_score >= 50:
-                confidence = 50  # Low confidence due to mixed signals
-                return Verdict(type="Good AI Coder", confidence=confidence)
-            else:
-                confidence = 50
-                return Verdict(type="Slop Coder", confidence=confidence)
-    
-    # Low AI usage (<60)
-    else:
-        if bad_practices_score < 50 and quality_score >= 50:
-            # Senior: Low AI + clean code + good quality
-            confidence = min(100, 60 + (60 - ai_score) // 3 + (50 - bad_practices_score) // 3 + (quality_score - 50) // 3)
-            return Verdict(type="Senior", confidence=confidence)
-        elif bad_practices_score >= 50 and quality_score < 50:
-            # Junior: Low AI + sloppy code + low quality
-            confidence = min(100, 60 + (bad_practices_score - 50) // 2 + (50 - quality_score) // 2)
-            return Verdict(type="Junior", confidence=confidence)
-        else:
-            # Edge case: Low AI but mixed signals
-            # If quality is high, lean toward Senior; otherwise Junior
-            if quality_score >= 50:
-                confidence = 50
-                return Verdict(type="Senior", confidence=confidence)
-            else:
-                confidence = 50
-                return Verdict(type="Junior", confidence=confidence)
-
-
-# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -196,53 +150,6 @@ def parse_repo_url(repo_url: str) -> tuple[str, str]:
         )
 
     return match.group(1), match.group(2)
-
-
-def get_or_create_user(session: Session, username: str) -> User:
-    """Get existing user or create new one. Handles concurrent inserts."""
-    user = session.query(User).filter(User.username == username).first()
-
-    if not user:
-        try:
-            user = User(
-                username=username,
-                github_link=f"https://github.com/{username}",
-            )
-            session.add(user)
-            session.flush()
-        except IntegrityError:
-            # Another concurrent request created it - rollback and query again
-            session.rollback()
-            user = session.query(User).filter(User.username == username).first()
-            if not user:
-                raise  # Re-raise if still not found (shouldn't happen)
-
-    return user
-
-
-def get_or_create_repo(session: Session, user: User, repo_url: str, repo_name: str) -> Repo:
-    """Get existing repo or create new one. Handles concurrent inserts."""
-    repo = session.query(Repo).filter(Repo.github_link == repo_url).first()
-
-    if not repo:
-        try:
-            repo = Repo(
-                user_id=user.id,
-                github_link=repo_url,
-                repo_name=repo_name,
-                stars=0,
-                languages="{}",
-            )
-            session.add(repo)
-            session.flush()
-        except IntegrityError:
-            # Another concurrent request created it - rollback and query again
-            session.rollback()
-            repo = session.query(Repo).filter(Repo.github_link == repo_url).first()
-            if not repo:
-                raise  # Re-raise if still not found (shouldn't happen)
-
-    return repo
 
 
 def build_analysis_response(repo: Repo, repo_analysis: RepoAnalysis) -> AnalysisResponse:
@@ -270,143 +177,6 @@ def build_analysis_response(repo: Repo, repo_analysis: RepoAnalysis) -> Analysis
         code_quality=code_quality_data,
         files_analyzed=files_analyzed,
     )
-
-
-# =============================================================================
-# LLM HELPER FUNCTIONS (split for SSE streaming)
-# =============================================================================
-
-def _build_findings_context(bad_practices_result, code_quality_result):
-    """Build findings context list for LLM prompts."""
-    findings_context = []
-    for finding in bad_practices_result.findings[:5]:
-        findings_context.append({
-            "category": "Bad Practice", "type": finding.type, "severity": finding.severity,
-            "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
-            "explanation": finding.explanation,
-        })
-    for finding in code_quality_result.findings[:5]:
-        findings_context.append({
-            "category": "Code Quality", "type": finding.type, "severity": finding.severity,
-            "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
-            "explanation": finding.explanation,
-        })
-    return findings_context
-
-
-def call_gemini_evaluation(
-    repo_url: str,
-    repo_name: str,
-    ai_slop_result,
-    bad_practices_result,
-    code_quality_result,
-    extracted_data,
-    priorities: list[str] | None = None,
-) -> dict | None:
-    """
-    LLM Call 1: Business value + standout features.
-    Returns dict with keys: business_value, standout_features.
-    Prompt is assembled from priority modules based on selected priorities.
-    """
-    if priorities:
-        logger.info(f"[eval] Priorities received for {repo_url}: {priorities}")
-    from google import genai
-
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        return None
-
-    findings_context = _build_findings_context(bad_practices_result, code_quality_result)
-    file_tree = [path for path, score in sorted(
-        extracted_data.file_importance.items(), key=lambda x: x[1], reverse=True
-    )[:10]]
-
-    prompt = build_evaluation_prompt(
-        repo_url=repo_url,
-        repo_name=repo_name,
-        ai_slop_result=ai_slop_result,
-        bad_practices_result=bad_practices_result,
-        code_quality_result=code_quality_result,
-        file_tree=file_tree,
-        findings_context=findings_context,
-        priorities=priorities,
-    )
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                config={
-                    "http_options": {"timeout": 30_000},
-                    "temperature": 0.0,
-                    "top_p": 0.0,
-                    "top_k": 1
-                },
-            )
-            response_text = response.text.strip().replace("```json", "").replace("```", "")
-            return json.loads(response_text)
-        except (json.JSONDecodeError, IndexError, Exception) as e:
-            logger.warning(f"Gemini evaluation error (attempt {attempt + 1}/2): {e}")
-            time.sleep(1)
-
-    return None
-
-
-def call_gemini_questions(
-    repo_url: str,
-    repo_name: str,
-    ai_slop_result,
-    bad_practices_result,
-    code_quality_result,
-    extracted_data,
-    priorities: list[str] | None = None,
-) -> dict | None:
-    """
-    LLM Call 2: Interview questions.
-    Returns dict with key: interview_questions.
-    Prompt is assembled from priority modules based on selected priorities.
-    """
-    if priorities:
-        logger.info(f"[questions] Priorities received for {repo_url}: {priorities}")
-    from google import genai
-
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        return None
-
-    findings_context = _build_findings_context(bad_practices_result, code_quality_result)
-    file_tree = [path for path, score in sorted(
-        extracted_data.file_importance.items(), key=lambda x: x[1], reverse=True
-    )[:10]]
-
-    prompt = build_questions_prompt(
-        repo_url=repo_url,
-        repo_name=repo_name,
-        ai_slop_result=ai_slop_result,
-        bad_practices_result=bad_practices_result,
-        code_quality_result=code_quality_result,
-        file_tree=file_tree,
-        findings_context=findings_context,
-        priorities=priorities,
-    )
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                config={"http_options": {"timeout": 30_000}},
-            )
-            response_text = response.text.strip().replace("```json", "").replace("```", "")
-            return json.loads(response_text)
-        except (json.JSONDecodeError, IndexError, Exception) as e:
-            logger.warning(f"Gemini questions error (attempt {attempt + 1}/2): {e}")
-            time.sleep(1)
-
-    return None
 
 
 # =============================================================================
@@ -476,75 +246,20 @@ def analyze_repo(request: Request, body: AnalyzeRequest):
 
         # Clone repository
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = subprocess.run(
-                ["git", "clone", "--depth", "100", repo_url, temp_dir],
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='ignore',  # Ignore Unicode decode errors
-                timeout=120,
-            )
-            
-            if result.returncode != 0:
-                logger.error(f"Clone failed for {repo_url}: {result.stderr}")
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to clone repository. Please check the URL and try again.",
+            try:
+                extracted_data, ai_slop_result, bad_practices_result, code_quality_result, verdict = run_analysis_pipeline(repo_url)
+                
+                repo_analysis = save_analysis_results(
+                    session, repo.id, extracted_data, ai_slop_result, bad_practices_result, code_quality_result, verdict
                 )
-            
-            # Extract repo data
-            extracted_data = extract_repo_data(temp_dir)
-            
-            # Extract features for ML classifier
-            features = extract_features(extracted_data)
-            
-            # Update repo with languages from extraction
-            if extracted_data.languages:
-                repo.languages = json.dumps(extracted_data.languages)
-            
-            # Run all three analyzers
-            ai_slop_result = analyze_ai_slop(extracted_data, features)
-            bad_practices_result = analyze_bad_practices(extracted_data)
-            code_quality_result = analyze_code_quality(extracted_data)
-            
-            # Compute verdict
-            verdict = compute_verdict(
-                ai_slop_result.score,
-                bad_practices_result.score,
-                code_quality_result.score,
-            )
-            
-            # Build files_analyzed list from importance scores (clamp to 0-100 for API schema)
-            files_analyzed = [
-                {"path": path, "importance_score": min(max(score, 0), 100), "loc": len(extracted_data.files.get(path, "").split("\n"))}
-                for path, score in sorted(
-                    extracted_data.file_importance.items(),
-                    key=lambda x: x[1],
-                    reverse=True
-                )[:15]
-            ]
-            
-            # Store in database
-            repo_analysis = RepoAnalysis(
-                repo_id=repo.id,
-                analyzed_at=datetime.utcnow(),
-                verdict_type=verdict.type,
-                verdict_confidence=verdict.confidence,
-                ai_slop_score=ai_slop_result.score,
-                ai_slop_confidence=ai_slop_result.confidence.value,
-                ai_slop_data=ai_slop_result.model_dump_json(),
-                bad_practices_score=bad_practices_result.score,
-                bad_practices_data=bad_practices_result.model_dump_json(),
-                code_quality_score=code_quality_result.score,
-                code_quality_data=code_quality_result.model_dump_json(),
-                files_analyzed=json.dumps(files_analyzed),
-            )
-            session.add(repo_analysis)
-            session.commit()
-            session.refresh(repo_analysis)
-            session.refresh(repo)
+                session.commit()
+                session.refresh(repo_analysis)
+                session.refresh(repo)
 
-            return build_analysis_response(repo, repo_analysis)
+                return build_analysis_response(repo, repo_analysis)
+            except Exception as e:
+                logger.error(f"Analysis failed for {repo_url}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/repo/{repo_id}")
@@ -585,6 +300,143 @@ def delete_repo_analysis(request: Request, repo_id: int):
             session.commit()
 
         return {"status": "deleted", "repo_id": repo_id, "deleted_items": deleted_count}
+
+
+@app.post("/batch/upload", response_model=BatchUploadResponse)
+@limiter.limit("5/minute")
+async def upload_batch(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    resumes: list[UploadFile] = File(...),
+    priorities: str = Form(None) # Passed as comma-separated string or JSON
+):
+    """
+    Upload a batch of resumes for background processing.
+    """
+    # 1. Validation: Max 10 files
+    if len(resumes) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 files allowed per batch.")
+    
+    # 2. Validation: Extensions
+    for resume in resumes:
+        ext = Path(resume.filename).suffix.lower()
+        if ext not in [".pdf", ".docx"]:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Only .pdf and .docx allowed.")
+
+    # Parse priorities if provided
+    priority_list = DEFAULT_PRIORITIES
+    if priorities:
+        try:
+            # Try parsing as JSON list
+            parsed = json.loads(priorities)
+            if isinstance(parsed, list):
+                priority_list = [p for p in parsed if p in VALID_PRIORITIES]
+        except json.JSONDecodeError:
+            # Try comma-separated
+            priority_list = [p.strip() for p in priorities.split(",") if p.strip() in VALID_PRIORITIES]
+    
+    if not priority_list:
+        priority_list = DEFAULT_PRIORITIES
+
+    import uuid
+    batch_id = str(uuid.uuid4())
+    
+    with Session(engine) as session:
+        # 3. Create BatchJob
+        batch_job = BatchJob(
+            id=batch_id, 
+            total_items=len(resumes), 
+            status="pending",
+            priorities=json.dumps(priority_list)
+        )
+        session.add(batch_job)
+        
+        # 4. Create BatchItems
+        for i, resume in enumerate(resumes):
+            content = await resume.read()
+            item = BatchItem(
+                batch_job_id=batch_id,
+                position=i,
+                filename=resume.filename,
+                file_bytes=content,
+                file_ext=Path(resume.filename).suffix.lower(),
+                status="pending"
+            )
+            session.add(item)
+            
+        session.commit()
+        
+        # 5. Kick off background task
+        background_tasks.add_task(process_batch, batch_id, priority_list)
+        
+        return BatchUploadResponse(batch_id=batch_id)
+
+
+@app.get("/batch/{batch_id}/status", response_model=BatchStatusResponse)
+@limiter.limit("60/minute")
+def get_batch_status(request: Request, batch_id: str):
+    """
+    Get the status of a batch job and all its items.
+    """
+    with Session(engine) as session:
+        batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        if not batch_job:
+            raise HTTPException(status_code=404, detail="Batch job not found")
+            
+        completed_count = session.query(BatchItem).filter(
+            BatchItem.batch_job_id == batch_id, 
+            BatchItem.status.in_(["completed", "error"])
+        ).count()
+        
+        item_statuses = []
+        for item in batch_job.items:
+            verdict = None
+            standout_features = []
+            
+            if item.status == "completed" and item.repo:
+                if item.repo.repo_analysis:
+                    verdict = Verdict(
+                        type=item.repo.repo_analysis.verdict_type,
+                        confidence=item.repo.repo_analysis.verdict_confidence
+                    )
+                if item.repo.repo_evaluation:
+                    standout_features = json.loads(item.repo.repo_evaluation.standout_features)
+            
+            item_statuses.append(BatchItemStatus(
+                id=item.id,
+                position=item.position,
+                filename=item.filename,
+                candidate_name=item.candidate_name or "Unknown",
+                candidate_university=item.candidate_university,
+                status=item.status,
+                error_message=item.error_message,
+                repo_id=item.repo_id,
+                verdict=verdict,
+                standout_features=standout_features
+            ))
+            
+        return BatchStatusResponse(
+            batch_id=batch_job.id,
+            created_at=batch_job.created_at,
+            total_items=batch_job.total_items,
+            completed_items=completed_count,
+            status=batch_job.status,
+            items=item_statuses
+        )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Resume any pending or running batch jobs on startup.
+    """
+    with Session(engine) as session:
+        # Find all jobs that aren't completed
+        unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
+        for job in unfinished_jobs:
+            logger.info(f"Resuming batch job {job.id} on startup")
+            priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
+            asyncio.create_task(process_batch(job.id, priorities))
 
 
 @app.post("/analyze-stream")
@@ -729,72 +581,22 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                 # === LLM PHASE ===
 
                 # 8. LLM Call 1: Business value + standout features
-                eval_result = call_gemini_evaluation(
+                bv, sf, ir, rr, iq_full = run_evaluation_pipeline(
                     repo_url, repo_name,
                     ai_slop_result, bad_practices_result, code_quality_result,
                     extracted_data,
                     priorities=priorities,
                 )
 
-                # 9. Determine rejection status
-                business_value = None
-                standout_features = []
-                is_rejected = False
-                rejection_reason = None
+                yield f"event: evaluation\ndata: {json.dumps({'business_value': bv, 'standout_features': sf, 'is_rejected': ir, 'rejection_reason': rr})}\n\n"
 
-                if eval_result:
-                    business_value = eval_result.get("business_value")
-                    standout_features = [str(f) for f in eval_result.get("standout_features", [])[:3]]
+                # 10. LLM Call 2: Interview questions (already returned from evaluation pipeline in our new service)
+                yield f"event: questions\ndata: {json.dumps({'interview_questions': iq_full})}\n\n"
 
-                if standout_features:
-                    is_rejected = False
-                    rejection_reason = None
-                else:
-                    if ai_slop_result.score == 100:
-                        is_rejected = True
-                        rejection_reason = "AI-generated code and nothing stands out"
-
-                if not eval_result:
-                    logger.error(f"LLM evaluation failed after retries for {repo_url}")
-
-                yield f"event: evaluation\ndata: {json.dumps({'business_value': business_value, 'standout_features': standout_features, 'is_rejected': is_rejected, 'rejection_reason': rejection_reason})}\n\n"
-
-                # 10. LLM Call 2: Interview questions
-                questions_result = call_gemini_questions(
-                    repo_url, repo_name,
-                    ai_slop_result, bad_practices_result, code_quality_result,
-                    extracted_data,
-                    priorities=priorities,
-                )
-
-                questions_list = []
-                questions_error = None
-                if questions_result:
-                    questions_list = questions_result.get("interview_questions", [])[:7]
-                else:
-                    logger.error(f"LLM questions failed after retries for {repo_url}")
-                    questions_error = "No questions generated, an error occurred."
-
-                questions_event: dict = {"interview_questions": questions_list}
-                if questions_error:
-                    questions_event["error"] = questions_error
-
-                yield f"event: questions\ndata: {json.dumps(questions_event)}\n\n"
-
-                # 11. Save evaluation to DB (only if eval LLM succeeded)
-                if eval_result:
+                # 11. Save evaluation to DB
+                if bv:
                     try:
-                        repo_evaluation = RepoEvaluation(
-                            repo_id=repo.id,
-                            evaluated_at=datetime.utcnow(),
-                            is_rejected=1 if is_rejected else 0,
-                            rejection_reason=rejection_reason,
-                            business_value=json.dumps(business_value) if business_value else json.dumps({}),
-                            standout_features=json.dumps(standout_features),
-                            interview_questions=json.dumps(questions_list),
-                        )
-                        session.add(repo_evaluation)
-                        session.commit()
+                        save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq_full)
                     except Exception as e:
                         logger.error(f"Failed to save evaluation for {repo_url}: {e}")
 
