@@ -9,6 +9,13 @@ const HackerPage = () => {
 
   const handleSubmit = (repoUrl: string, _priorities: PriorityKey[]) => {
     if (repoUrl.includes("github.com")) {
+      if (typeof gtag !== "undefined") {
+        gtag("event", "analysis_started", {
+          event_category: "engagement",
+          portal: "hacker",
+          repo_url: repoUrl,
+        });
+      }
       const params = new URLSearchParams({
         link: repoUrl,
         mode: "hacker",
