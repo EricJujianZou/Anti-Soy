@@ -12,6 +12,7 @@ from v2.data_extractor import extract_repo_data
 from v2.feature_extractor import extract_features
 from v2.analyzers import analyze_ai_slop, analyze_bad_practices, analyze_code_quality
 from v2.schemas import Verdict, VALID_PRIORITIES, DEFAULT_PRIORITIES
+from v2.clone_script import clone_repo
 from prompt_modules import build_evaluation_prompt, build_questions_prompt
 
 logger = logging.getLogger(__name__)
@@ -114,12 +115,7 @@ def run_analysis_pipeline(repo_url: str):
     Returns (extracted_data, ai_slop, bad_practices, code_quality, verdict)
     """
     with tempfile.TemporaryDirectory() as temp_dir:
-        result = subprocess.run(
-            ["git", "clone", "--depth", "100", repo_url, temp_dir],
-            capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=120,
-        )
-        if result.returncode != 0:
-            raise Exception(f"Failed to clone repository: {result.stderr}")
+        clone_repo(repo_url, temp_dir)
         
         extracted_data = extract_repo_data(temp_dir)
         features = extract_features(extracted_data)

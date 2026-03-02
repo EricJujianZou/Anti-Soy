@@ -451,14 +451,15 @@ def _get_git_commits(repo_path: Path, max_commits: int = 500) -> list[CommitInfo
     commits = []
     
     try:
-        # Get commit log with stats
+        # Get commit log with stats (--no-pager prevents blocking on less/pager)
         result = subprocess.run(
             [
-                "git", "log",
+                "git", "--no-pager", "log",
                 f"-{max_commits}",
                 "--pretty=format:%H|||%s|||%an|||%ad",
                 "--date=short",
-                "--numstat"
+                "--numstat",
+                "--no-pager"
             ],
             cwd=repo_path,
             capture_output=True,
