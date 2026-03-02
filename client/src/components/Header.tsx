@@ -22,11 +22,7 @@ export const Header = ({ className }: HeaderProps) => {
               className="flex items-center gap-2 text-primary font-bold text-xl tracking-tight hover:text-primary/80 transition-colors"
               aria-label="Go back"
             >
-              <img
-                src={`${import.meta.env.BASE_URL}logo.png`}
-                alt="ANTI-SOY logo"
-                className="h-16 w-16"
-              />
+              
               ANTI-SOY
             </button>
             <div className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground">
