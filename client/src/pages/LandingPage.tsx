@@ -37,7 +37,7 @@ const LandingPage = () => {
           {/* Headline */}
           <div className="text-center mb-16 max-w-2xl">
             <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-4 leading-tight">
-              Is this person a good match?
+              Is this person a good fit for your team?
               <br />
               <span className="text-primary">Show us their code</span>{" "}
               and we'll tell you.
@@ -79,13 +79,7 @@ const LandingPage = () => {
             </div>
 
             {/* Hacker card */}
-            <div className="relative flex flex-col gap-6 rounded bg-card border border-hacker/30 p-8 opacity-80">
-              {/* Coming Soon badge */}
-              <div className="absolute top-4 right-4">
-                <span className="text-[10px] font-bold uppercase tracking-widest border border-hacker/50 text-hacker bg-hacker/10 px-2 py-0.5">
-                  Coming Soon
-                </span>
-              </div>
+            <div className="relative flex flex-col gap-6 rounded bg-card border border-hacker/40 p-8 hover:border-hacker/70 transition-colors">
 
               {/* Icon */}
               <div className="flex items-center gap-3">
@@ -105,9 +99,8 @@ const LandingPage = () => {
               </p>
 
               <button
-                disabled
-                className="w-full border border-hacker/30 text-hacker/40 py-3 px-6 font-bold uppercase tracking-widest text-sm cursor-not-allowed"
-                title="Coming soon"
+                onClick={() => navigate("/hacker")}
+                className="w-full bg-hacker text-hacker-foreground py-3 px-6 font-bold uppercase tracking-widest text-sm hover:bg-hacker/90 active:scale-[0.98] transition-all"
               >
                 I'm a Hacker →
               </button>

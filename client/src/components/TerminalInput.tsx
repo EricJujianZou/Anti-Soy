@@ -15,6 +15,8 @@ interface TerminalInputProps {
   examples?: Example[];
   secondaryAction?: React.ReactNode;
   onSecondaryAction?: (priorities: PriorityKey[]) => void;
+  hidePriorities?: boolean;
+  submitLabel?: string;
 }
 
 export const TerminalInput = ({
@@ -24,6 +26,8 @@ export const TerminalInput = ({
   examples,
   secondaryAction,
   onSecondaryAction,
+  hidePriorities = false,
+  submitLabel,
 }: TerminalInputProps) => {
   const [value, setValue] = useState("");
   const [isFocused, setIsFocused] = useState(false);
@@ -137,25 +141,27 @@ export const TerminalInput = ({
       </div>
 
       {/* Evaluation Priorities */}
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-        <span className="text-xs text-muted-foreground uppercase tracking-widest mr-1">Priorities:</span>
-        {PRIORITY_OPTIONS.map((opt) => (
-          <label
-            key={opt.key}
-            className="flex items-center gap-1.5 cursor-pointer select-none group"
-          >
-            <Checkbox
-              checked={priorities.has(opt.key)}
-              onCheckedChange={() => togglePriority(opt.key)}
-              disabled={isLoading}
-              className="border-primary/60 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-            />
-            <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
-              {opt.label}
-            </span>
-          </label>
-        ))}
-      </div>
+      {!hidePriorities && (
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+          <span className="text-xs text-muted-foreground uppercase tracking-widest mr-1">Priorities:</span>
+          {PRIORITY_OPTIONS.map((opt) => (
+            <label
+              key={opt.key}
+              className="flex items-center gap-1.5 cursor-pointer select-none group"
+            >
+              <Checkbox
+                checked={priorities.has(opt.key)}
+                onCheckedChange={() => togglePriority(opt.key)}
+                disabled={isLoading}
+                className="border-primary/60 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+              />
+              <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
+                {opt.label}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
 
       <div className="flex justify-center mt-4">
         <button
@@ -181,7 +187,7 @@ export const TerminalInput = ({
               Processing...
             </span>
           ) : (
-            "[ run scan ]"
+            submitLabel ?? "[ run scan ]"
           )}
         </button>
       </div>
