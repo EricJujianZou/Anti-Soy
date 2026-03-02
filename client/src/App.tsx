@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import LandingPage from "./pages/LandingPage";
 import Index from "./pages/Index";
+import HackerPage from "./pages/HackerPage";
 import RepoAnalysis from "./pages/RepoAnalysis";
 import NotFound from "./pages/NotFound";
 
@@ -26,6 +27,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/recruiter" element={<Index />} />
+            <Route path="/hacker" element={<HackerPage />} />
             <Route path="/repo/:repoId" element={<RepoAnalysis />} />
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/dashboard/:batchId" element={<BatchDashboard />} />
