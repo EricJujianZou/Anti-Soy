@@ -62,6 +62,10 @@ export default {
           glow: "hsl(var(--amber-glow))",
           dim: "hsl(var(--amber-dim))",
         },
+        hacker: {
+          DEFAULT: "hsl(var(--hacker))",
+          foreground: "hsl(var(--hacker-foreground))",
+        },
         slate: {
           dark: "hsl(var(--slate-dark))",
           darker: "hsl(var(--slate-darker))",

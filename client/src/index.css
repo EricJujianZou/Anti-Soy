@@ -59,6 +59,10 @@
     --sidebar-accent-foreground: 40 20% 80%;
     --sidebar-border: 40 15% 20%;
     --sidebar-ring: 38 92% 50%;
+
+    /* Hacker portal accent */
+    --hacker: 190 95% 50%;
+    --hacker-foreground: 30 10% 6%;
   }
 
   .dark {
@@ -81,6 +85,10 @@
     --border: 40 15% 20%;
     --input: 40 15% 20%;
     --ring: 38 92% 50%;
+
+    /* Hacker portal accent */
+    --hacker: 190 95% 50%;
+    --hacker-foreground: 30 10% 6%;
   }
 }
 
