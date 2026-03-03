@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
+import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 // import { GridBackground } from "@/components/GridBackground";
 import { Header } from "@/components/Header";
 import { ProgressTracker } from "@/components/ProgressTracker";
@@ -96,22 +96,10 @@ const RepoAnalysis = () => {
   const repoName = repoLink ? getRepoName(repoLink) : analysis?.repo.name || repoId || "Unknown";
 
   if (!repoLink && (!repoId || repoId === "new")) {
-    return (
-      <div>
-        <Header />
-        <main className="container mx-auto flex min-h-[70vh] items-center justify-center px-4 py-12">
-          <div className="text-center">
-            <h2 className="text-2xl font-bold">No repository specified</h2>
-            <p className="text-muted-foreground mt-2 mb-4">
-              Please go back and select a repository to analyze.
-            </p>
-            <Link to="/" className="text-primary hover:underline">
-              ← Back to home
-            </Link>
-          </div>
-        </main>
-      </div>
-    );
+    // No link param and no stored repo ID — redirect to home rather than showing a dead end.
+    // This handles stale/shared URLs when the ephemeral DB no longer has the data.
+    navigate("/", { replace: true });
+    return null;
   }
 
   const renderLoading = () => (
