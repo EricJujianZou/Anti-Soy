@@ -130,34 +130,48 @@ def run_analysis_pipeline(repo_url: str):
 
 def save_analysis_results(session: Session, repo_id: int, extracted_data, ai_slop, bad_practices, code_quality, verdict):
     """
-    Saves analysis results to the database.
+    Saves analysis results to the database. Updates existing record if one already exists.
     """
     files_analyzed = [
         {"path": path, "importance_score": min(max(score, 0), 100), "loc": len(extracted_data.files.get(path, "").split("\n"))}
         for path, score in sorted(extracted_data.file_importance.items(), key=lambda x: x[1], reverse=True)[:15]
     ]
-    
-    repo_analysis = RepoAnalysis(
-        repo_id=repo_id,
-        analyzed_at=datetime.utcnow(),
-        verdict_type=verdict.type,
-        verdict_confidence=verdict.confidence,
-        ai_slop_score=ai_slop.score,
-        ai_slop_confidence=ai_slop.confidence.value,
-        ai_slop_data=ai_slop.model_dump_json(),
-        bad_practices_score=bad_practices.score,
-        bad_practices_data=bad_practices.model_dump_json(),
-        code_quality_score=code_quality.score,
-        code_quality_data=code_quality.model_dump_json(),
-        files_analyzed=json.dumps(files_analyzed),
-    )
-    session.add(repo_analysis)
-    
+
+    repo_analysis = session.query(RepoAnalysis).filter(RepoAnalysis.repo_id == repo_id).first()
+    if repo_analysis:
+        repo_analysis.analyzed_at = datetime.utcnow()
+        repo_analysis.verdict_type = verdict.type
+        repo_analysis.verdict_confidence = verdict.confidence
+        repo_analysis.ai_slop_score = ai_slop.score
+        repo_analysis.ai_slop_confidence = ai_slop.confidence.value
+        repo_analysis.ai_slop_data = ai_slop.model_dump_json()
+        repo_analysis.bad_practices_score = bad_practices.score
+        repo_analysis.bad_practices_data = bad_practices.model_dump_json()
+        repo_analysis.code_quality_score = code_quality.score
+        repo_analysis.code_quality_data = code_quality.model_dump_json()
+        repo_analysis.files_analyzed = json.dumps(files_analyzed)
+    else:
+        repo_analysis = RepoAnalysis(
+            repo_id=repo_id,
+            analyzed_at=datetime.utcnow(),
+            verdict_type=verdict.type,
+            verdict_confidence=verdict.confidence,
+            ai_slop_score=ai_slop.score,
+            ai_slop_confidence=ai_slop.confidence.value,
+            ai_slop_data=ai_slop.model_dump_json(),
+            bad_practices_score=bad_practices.score,
+            bad_practices_data=bad_practices.model_dump_json(),
+            code_quality_score=code_quality.score,
+            code_quality_data=code_quality.model_dump_json(),
+            files_analyzed=json.dumps(files_analyzed),
+        )
+        session.add(repo_analysis)
+
     # Update repo languages
     repo = session.query(Repo).filter(Repo.id == repo_id).first()
     if repo and extracted_data.languages:
         repo.languages = json.dumps(extracted_data.languages)
-    
+
     session.flush()
     return repo_analysis
 
@@ -250,15 +264,24 @@ def save_evaluation_results(
     """
     Saves evaluation results to the database.
     """
-    repo_evaluation = RepoEvaluation(
-        repo_id=repo_id,
-        evaluated_at=datetime.utcnow(),
-        is_rejected=1 if is_rejected else 0,
-        rejection_reason=rejection_reason,
-        business_value=json.dumps(business_value) if business_value else json.dumps({}),
-        standout_features=json.dumps(standout_features),
-        interview_questions=json.dumps(interview_questions),
-    )
-    session.add(repo_evaluation)
+    repo_evaluation = session.query(RepoEvaluation).filter(RepoEvaluation.repo_id == repo_id).first()
+    if repo_evaluation:
+        repo_evaluation.evaluated_at = datetime.utcnow()
+        repo_evaluation.is_rejected = 1 if is_rejected else 0
+        repo_evaluation.rejection_reason = rejection_reason
+        repo_evaluation.business_value = json.dumps(business_value) if business_value else json.dumps({})
+        repo_evaluation.standout_features = json.dumps(standout_features)
+        repo_evaluation.interview_questions = json.dumps(interview_questions)
+    else:
+        repo_evaluation = RepoEvaluation(
+            repo_id=repo_id,
+            evaluated_at=datetime.utcnow(),
+            is_rejected=1 if is_rejected else 0,
+            rejection_reason=rejection_reason,
+            business_value=json.dumps(business_value) if business_value else json.dumps({}),
+            standout_features=json.dumps(standout_features),
+            interview_questions=json.dumps(interview_questions),
+        )
+        session.add(repo_evaluation)
     session.flush()
     return repo_evaluation
