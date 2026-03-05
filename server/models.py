@@ -61,6 +61,10 @@ class RepoAnalysis(Base):
     verdict_type = Column(String, nullable=False)  # "Slop Coder", "Junior", "Senior", "Good AI Coder"
     verdict_confidence = Column(Integer, nullable=False)  # 0-100
 
+    # Overall Repository Score & Summary
+    general_score = Column(Integer, nullable=True)  # 0-100, aggregated repo health/quality score
+    analysis_summary = Column(Text, nullable=True)  # Readable text summary of the analysis
+
     # AI Slop Analyzer
     ai_slop_score = Column(Integer, nullable=False)  # 0-100
     ai_slop_confidence = Column(String, nullable=False)  # "low", "medium", "high"
@@ -81,7 +85,7 @@ class RepoAnalysis(Base):
     repo = relationship("Repo", back_populates="repo_analysis")
 
     def __repr__(self):
-        return f"<RepoAnalysis(id={self.id}, repo_id={self.repo_id}, verdict='{self.verdict_type}')>"
+        return f"<RepoAnalysis(id={self.id}, repo_id={self.repo_id}, verdict='{self.verdict_type}', general_score={self.general_score})>"
 
 
 class RepoEvaluation(Base):
@@ -110,6 +114,31 @@ class RepoEvaluation(Base):
 
     def __repr__(self):
         return f"<RepoEvaluation(id={self.id}, repo_id={self.repo_id}, rejected={bool(self.is_rejected)})>"
+
+
+class ProfileEvaluation(Base):
+    """Profile-level evaluation synthesizing analysis of top repositories"""
+    __tablename__ = "profile_evaluations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    evaluated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Tier Score (F, E, D, C, B, A, S)
+    tier = Column(String, nullable=False)  # "F", "E", "D", "C", "B", "A", "S"
+    
+    # Reasoning
+    profile_summary = Column(Text, nullable=False)  # LLM-generated explanation for the tier
+    
+    # Repository Analysis Context
+    top_repos_analyzed = Column(Text, nullable=False)  # JSON: List of analyzed repo URLs
+    repo_analyses_context = Column(Text, nullable=False)  # JSON: Summaries from each analyzed repo
+
+    # Relationship
+    user = relationship("User")
+
+    def __repr__(self):
+        return f"<ProfileEvaluation(id={self.id}, user_id={self.user_id}, tier='{self.tier}')>"
 
 
 class BatchJob(Base):
