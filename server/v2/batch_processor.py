@@ -117,7 +117,7 @@ async def process_single_item(item_id: int, priorities: list[str] = None):
                 
                 # Run Analysis
                 extracted_data, ai_slop, bad_practices, code_quality, verdict = run_analysis_pipeline(repo_url)
-                save_analysis_results(session, repo.id, extracted_data, ai_slop, bad_practices, code_quality, verdict)
+                save_analysis_results(session, repo.id, repo_name, extracted_data, ai_slop, bad_practices, code_quality, verdict)
                 
                 # Run Evaluation
                 bv, sf, ir, rr, iq = run_evaluation_pipeline(

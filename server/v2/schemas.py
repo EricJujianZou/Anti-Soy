@@ -173,6 +173,8 @@ class AnalysisResponse(BaseModel):
     """
     repo: RepoInfo = Field(..., description="Repository metadata")
     verdict: Verdict = Field(..., description="Overall verdict with confidence")
+    general_score: int | None = Field(None, ge=0, le=100, description="Overall repository health/quality score (0-100)")
+    analysis_summary: str | None = Field(None, description="Human-readable summary of the analysis findings and recommendations")
     ai_slop: AISlop = Field(..., description="AI Slop Detector results")
     bad_practices: BadPractices = Field(..., description="Bad Practices Detector results")
     code_quality: CodeQuality = Field(..., description="Code Quality Analyzer results")
@@ -302,6 +304,31 @@ class BatchStatusResponse(BaseModel):
     items: list[BatchItemStatus]
 
 
+
+
 class BatchUploadResponse(BaseModel):
     """Response for POST /batch/upload"""
     batch_id: str
+
+
+# =============================================================================
+# PROFILE EVALUATION ENDPOINT
+# =============================================================================
+
+class ProfileEvaluationResponse(BaseModel):
+    """
+    Complete profile evaluation response for POST /evaluate-profile endpoint.
+    Analyzes top repositories and generates a tier-based score with reasoning.
+    """
+    username: str = Field(..., description="GitHub username")
+    tier: str = Field(..., description="Tier score: F (lowest) to S (highest)")
+    profile_summary: str = Field(..., description="LLM-generated explanation for the tier and overall assessment")
+    top_repos_analyzed: list[str] = Field(..., description="URLs of the 3 most relevant repositories analyzed")
+    repo_analyses: list[dict] = Field(..., description="Analysis summaries from each repository (verdicts, scores, summaries)")
+    evaluated_at: datetime = Field(..., description="When the profile evaluation was performed")
+
+
+class EvaluateProfileRequest(BaseModel):
+    """Request body for POST /evaluate-profile endpoint"""
+    username: str = Field(..., description="GitHub username to evaluate")
+

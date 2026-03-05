@@ -124,6 +124,29 @@ export interface EvaluateResponse {
   interview_questions: InterviewQuestion[];
 }
 
+export interface RepoAnalysisContext {
+  repo_id?: number;
+  url: string;
+  name: string;
+  verdict: string;
+  verdict_confidence: number;
+  ai_slop_score: number;
+  bad_practices_score: number;
+  code_quality_score: number;
+  general_score: number | null;
+  summary: string | null;
+  is_pinned?: boolean;
+}
+
+export interface ProfileEvaluationResponse {
+  username: string;
+  tier: string;
+  profile_summary: string;
+  top_repos_analyzed: string[];
+  repo_analyses: RepoAnalysisContext[];
+  evaluated_at: string;
+}
+
 export type PriorityKey = "code_quality" | "security" | "originality" | "production_readiness" | "ai_detection";
 
 export const PRIORITY_OPTIONS: { key: PriorityKey; label: string }[] = [
@@ -206,6 +229,23 @@ export const api = {
     const res = await fetch(`${API_BASE_URL}/repo/${repo_id}`);
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: 'Failed to fetch analysis' }));
+      throw new Error(error.detail);
+    }
+    return res.json();
+  },
+
+  /**
+   * Triggers profile evaluation pipeline (/evaluate-profile).
+   * Analyzes top repositories and returns a tier score with reasoning.
+   */
+  evaluateProfile: async (username: string): Promise<ProfileEvaluationResponse> => {
+    const res = await fetch(`${API_BASE_URL}/evaluate-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: 'Failed to evaluate profile' }));
       throw new Error(error.detail);
     }
     return res.json();
