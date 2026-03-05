@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-from models import Base, User, Repo, RepoAnalysis, RepoEvaluation, BatchJob, BatchItem
+from models import Base, User, Repo, RepoAnalysis, RepoEvaluation, ProfileEvaluation, BatchJob, BatchItem
 
 # V2 imports
 from v2.data_extractor import extract_repo_data
@@ -50,6 +50,8 @@ from v2.schemas import (
     BatchStatusResponse,
     BatchItemStatus,
     BatchUploadResponse,
+    ProfileEvaluationResponse,
+    EvaluateProfileRequest,
     VALID_PRIORITIES,
     DEFAULT_PRIORITIES,
 )
@@ -58,7 +60,10 @@ from v2.batch_processor import process_batch
 from v2.analysis_service import (
     compute_verdict, 
     save_analysis_results, 
-    save_evaluation_results, 
+    save_evaluation_results,
+    find_top_repositories,
+    generate_profile_assessment,
+    save_profile_evaluation,
     run_analysis_pipeline, 
     run_evaluation_pipeline,
     get_or_create_user,
@@ -172,6 +177,8 @@ def build_analysis_response(repo: Repo, repo_analysis: RepoAnalysis) -> Analysis
             type=repo_analysis.verdict_type,
             confidence=repo_analysis.verdict_confidence,
         ),
+        general_score=repo_analysis.general_score,
+        analysis_summary=repo_analysis.analysis_summary,
         ai_slop=ai_slop_data,
         bad_practices=bad_practices_data,
         code_quality=code_quality_data,
@@ -250,7 +257,7 @@ def analyze_repo(request: Request, body: AnalyzeRequest):
                 extracted_data, ai_slop_result, bad_practices_result, code_quality_result, verdict = run_analysis_pipeline(repo_url)
                 
                 repo_analysis = save_analysis_results(
-                    session, repo.id, extracted_data, ai_slop_result, bad_practices_result, code_quality_result, verdict
+                    session, repo.id, repo_name, extracted_data, ai_slop_result, bad_practices_result, code_quality_result, verdict
                 )
                 session.commit()
                 session.refresh(repo_analysis)
@@ -616,5 +623,125 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# =============================================================================
+# PROFILE EVALUATION ENDPOINT
+# =============================================================================
+
+@app.post("/evaluate-profile", response_model=ProfileEvaluationResponse)
+@limiter.limit("5/minute")
+def evaluate_profile(request: Request, body: EvaluateProfileRequest):
+    """
+    Evaluate a GitHub profile by analyzing its top repositories.
+    
+    - Finds the 3 most relevant repositories
+    - Analyzes each one (or retrieves cached analysis)
+    - Uses LLM to generate a profile tier (F-S) and reasoning
+    - Returns comprehensive profile evaluation
+    """
+    username = body.username.strip().lower()
+    
+    with Session(engine) as session:
+        # Get or create user
+        user = get_or_create_user(session, username)
+        
+        # Find top repositories
+        top_repos_with_pinned = find_top_repositories(session, username, limit=3)
+        
+        if not top_repos_with_pinned:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No repositories found for user '{username}' or repositories haven't been analyzed yet."
+            )
+        
+        # Ensure all top repos are analyzed
+        repos_with_analysis = []
+        repo_pinned_status = {}  # Track which repos are pinned
+        
+        for repo, is_pinned in top_repos_with_pinned:
+            repo_pinned_status[repo.id] = is_pinned
+            
+            # If not already analyzed, analyze it
+            if not repo.repo_analysis:
+                try:
+                    extracted_data, ai_slop, bad_practices, code_quality, verdict = run_analysis_pipeline(repo.github_link)
+                    save_analysis_results(session, repo.id, repo.repo_name, extracted_data, ai_slop, bad_practices, code_quality, verdict)
+                    session.commit()
+                    session.refresh(repo)
+                except Exception as e:
+                    logger.error(f"Failed to analyze {repo.github_link}: {e}")
+                    continue
+            
+            if repo.repo_analysis:
+                repos_with_analysis.append((repo, repo.repo_analysis))
+        
+        if not repos_with_analysis:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not analyze any repositories for this user."
+            )
+        
+        # Check for a cached profile evaluation with the same set of repos
+        current_repo_urls = sorted(repo.github_link for repo, _ in repos_with_analysis)
+        existing_eval = session.query(ProfileEvaluation).filter(ProfileEvaluation.user_id == user.id).first()
+        
+        if existing_eval:
+            cached_urls = sorted(json.loads(existing_eval.top_repos_analyzed))
+            if cached_urls == current_repo_urls:
+                # Same repos — return cached result without hitting the LLM
+                tier = existing_eval.tier
+                profile_summary = existing_eval.profile_summary
+            else:
+                # Repos changed — regenerate
+                tier, profile_summary = generate_profile_assessment(repos_with_analysis)
+                existing_eval.tier = tier
+                existing_eval.profile_summary = profile_summary
+                existing_eval.top_repos_analyzed = json.dumps(current_repo_urls)
+                existing_eval.evaluated_at = datetime.utcnow()
+                session.commit()
+        else:
+            # First time evaluating this profile
+            tier, profile_summary = generate_profile_assessment(repos_with_analysis)
+            try:
+                save_profile_evaluation(
+                    session,
+                    user.id,
+                    tier,
+                    profile_summary,
+                    [repo for repo, _ in repos_with_analysis],
+                    [analysis for _, analysis in repos_with_analysis]
+                )
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+        
+        # Build response
+        repo_analyses = []
+        for repo, analysis in repos_with_analysis:
+            is_pinned = repo_pinned_status.get(repo.id, False)
+            repo_analyses.append({
+                "repo_id": repo.id,
+                "url": repo.github_link,
+                "name": repo.repo_name,
+                "verdict": analysis.verdict_type,
+                "verdict_confidence": analysis.verdict_confidence,
+                "ai_slop_score": analysis.ai_slop_score,
+                "bad_practices_score": analysis.bad_practices_score,
+                "code_quality_score": analysis.code_quality_score,
+                "general_score": analysis.general_score,
+                "summary": analysis.analysis_summary,
+                "is_pinned": is_pinned,
+            })
+        
+        return ProfileEvaluationResponse(
+            username=username,
+            tier=tier,
+            profile_summary=profile_summary,
+            top_repos_analyzed=[repo.github_link for repo, _ in repos_with_analysis],
+            repo_analyses=repo_analyses,
+            evaluated_at=datetime.utcnow(),
+        )
+
 
 
