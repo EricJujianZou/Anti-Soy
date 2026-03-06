@@ -30,14 +30,18 @@ export interface BatchStatusResponse {
   priorities?: PriorityKey[];
 }
 
-export async function uploadBatch(files: File[], priorities?: PriorityKey[]): Promise<{ batch_id: string }> {
+export async function uploadBatch(files: File[], priorities?: PriorityKey[], useGenericQuestions?: boolean): Promise<{ batch_id: string }> {
   const formData = new FormData();
   files.forEach((file) => {
     formData.append("resumes", file);
   });
-  
+
   if (priorities && priorities.length > 0) {
     formData.append("priorities", JSON.stringify(priorities));
+  }
+
+  if (useGenericQuestions) {
+    formData.append("use_generic_questions", "true");
   }
 
   const res = await fetch(`${API_BASE_URL}/batch/upload`, {

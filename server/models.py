@@ -121,6 +121,7 @@ class BatchJob(Base):
     total_items = Column(Integer, nullable=False)
     status = Column(String, default="pending", nullable=False)  # "pending" | "running" | "completed"
     priorities = Column(Text) # Store as JSON array
+    use_generic_questions = Column(Integer, default=0, nullable=False)  # 0 = LLM questions, 1 = hardcoded
 
     # Relationship to batch items
     items = relationship("BatchItem", back_populates="batch_job", cascade="all, delete-orphan", order_by="BatchItem.position")
