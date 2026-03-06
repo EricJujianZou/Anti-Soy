@@ -519,12 +519,6 @@ const RepoAnalysis = () => {
                       </p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground">Test Coverage</p>
-                      <p className="font-medium">
-                        {analysis.code_quality.test_coverage}%
-                      </p>
-                    </div>
-                    <div>
                       <p className="text-muted-foreground">README</p>
                       <p className="font-medium">
                         {analysis.code_quality.readme_quality}%

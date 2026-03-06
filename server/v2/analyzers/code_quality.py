@@ -1,7 +1,7 @@
 """
 Code Quality Analyzer for Anti-Soy V2
 
-Evaluates overall code quality based on organization, testing, documentation,
+Evaluates overall code quality based on organization, documentation,
 and dependency management.
 
 Unlike AI Slop and Bad Practices (where higher = worse), Code Quality uses
@@ -9,7 +9,6 @@ higher = better scoring to match intuition.
 
 Categories:
 - files_organized: Project structure, separation of concerns
-- test_coverage: Test file presence and ratio
 - readme_quality: README completeness and sections
 - dependency_health: Lock files, pinned versions, dependency count
 
@@ -20,7 +19,7 @@ import re
 from pathlib import Path
 
 from ..schemas import CodeQuality, Finding, Severity
-from ..data_extractor import RepoData, is_code_file, is_test_file
+from ..data_extractor import RepoData, is_code_file
 
 
 # =============================================================================
@@ -29,10 +28,9 @@ from ..data_extractor import RepoData, is_code_file, is_test_file
 
 # Weight for overall score calculation (must sum to 1.0)
 METRIC_WEIGHTS = {
-    "files_organized": 0.21,
-    "test_coverage": 0.29,
-    "readme_quality": 0.21,
-    "dependency_health": 0.29,
+    "files_organized": 0.30,
+    "readme_quality": 0.30,
+    "dependency_health": 0.40,
 }
 
 # README quality markers
@@ -100,20 +98,17 @@ class CodeQualityAnalyzer:
 
         # Calculate each metric (0-100, higher = better)
         files_organized, org_findings = self._analyze_organization(repo_data)
-        test_coverage, test_findings = self._analyze_test_coverage(repo_data)
         readme_quality, readme_findings = self._analyze_readme(repo_data)
         dependency_health, dep_findings = self._analyze_dependencies(repo_data)
 
         # Collect all findings
         findings.extend(org_findings)
-        findings.extend(test_findings)
         findings.extend(readme_findings)
         findings.extend(dep_findings)
 
         # Calculate overall score (weighted average)
         overall_score = int(
             files_organized * METRIC_WEIGHTS["files_organized"] +
-            test_coverage * METRIC_WEIGHTS["test_coverage"] +
             readme_quality * METRIC_WEIGHTS["readme_quality"] +
             dependency_health * METRIC_WEIGHTS["dependency_health"]
         )
@@ -121,7 +116,6 @@ class CodeQualityAnalyzer:
         return CodeQuality(
             score=overall_score,
             files_organized=files_organized,
-            test_coverage=test_coverage,
             readme_quality=readme_quality,
             dependency_health=dependency_health,
             findings=findings,
@@ -213,97 +207,6 @@ class CodeQualityAnalyzer:
                     snippet=f"File has {loc} lines of code",
                     explanation=f"Large file with {loc} LOC. Consider breaking into smaller, focused modules.",
                 ))
-        
-        return max(0, min(100, score)), findings
-    
-    # =========================================================================
-    # TEST COVERAGE (0-100)
-    # =========================================================================
-    
-    def _analyze_test_coverage(self, repo_data: RepoData) -> tuple[int, list[Finding]]:
-        """
-        Analyze test presence and coverage.
-        
-        Checks for:
-        - Presence of test files
-        - Test to code ratio
-        - Test configuration files
-        """
-        findings: list[Finding] = []
-        
-        tree = repo_data.tree
-        
-        # Count test files vs source files
-        test_files = []
-        source_files = []
-        
-        for path in tree:
-            if not is_code_file(path):
-                continue
-            
-            if is_test_file(path):
-                test_files.append(path)
-            else:
-                source_files.append(path)
-        
-        total_source = len(source_files)
-        total_tests = len(test_files)
-        
-        if total_source == 0:
-            return 50, findings  # No source files
-        
-        # Calculate test ratio
-        test_ratio = total_tests / total_source if total_source > 0 else 0
-        
-        # Score based on test ratio
-        if total_tests == 0:
-            score = 0
-            findings.append(Finding(
-                type="no_tests",
-                severity=Severity.WARNING,
-                file="(project)",
-                line=1,
-                snippet="No test files found",
-                explanation="No test files detected. Tests are essential for code reliability and maintainability.",
-            ))
-        elif test_ratio < 0.1:
-            score = 20
-            findings.append(Finding(
-                type="low_test_coverage",
-                severity=Severity.INFO,
-                file="(project)",
-                line=1,
-                snippet=f"{total_tests} test files for {total_source} source files",
-                explanation=f"Low test coverage: {test_ratio:.0%} test-to-source ratio. Aim for at least 30%.",
-            ))
-        elif test_ratio < 0.3:
-            score = 50
-        elif test_ratio < 0.5:
-            score = 70
-        elif test_ratio < 0.8:
-            score = 85
-        else:
-            score = 100
-        
-        # Check for test config files (pytest.ini, jest.config.js, etc.)
-        test_configs = [
-            "pytest.ini", "setup.cfg", "pyproject.toml",
-            "jest.config.js", "jest.config.ts", "jest.config.json",
-            "vitest.config.ts", "vitest.config.js",
-            "karma.conf.js", ".mocharc.js", ".mocharc.json",
-            # Go: go.mod implies go test support
-            "go.mod",
-            # C#: test project files
-            ".csproj",
-        ]
-        
-        has_test_config = any(
-            any(cfg in path for cfg in test_configs)
-            for path in tree
-        )
-        
-        if has_test_config and total_tests > 0:
-            score = min(100, score + 10)  # Bonus for proper test config
         
         return max(0, min(100, score)), findings
     

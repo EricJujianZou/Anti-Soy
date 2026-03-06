@@ -151,7 +151,6 @@ class CodeQuality(BaseModel):
 
     # Individual metric scores (0-100 each)
     files_organized: int = Field(..., ge=0, le=100, description="How well organized the file structure is")
-    test_coverage: int = Field(..., ge=0, le=100, description="Test presence and quality score")
     readme_quality: int = Field(..., ge=0, le=100, description="README completeness and clarity")
     dependency_health: int = Field(..., ge=0, le=100, description="Dependency management quality")
 

@@ -81,7 +81,6 @@ export interface BadPractices {
 export interface CodeQuality {
   score: number;
   files_organized: number;
-  test_coverage: number;
   readme_quality: number;
   dependency_health: number;
   findings: Finding[];

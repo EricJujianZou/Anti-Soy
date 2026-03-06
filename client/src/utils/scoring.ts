@@ -23,7 +23,6 @@ type AIUsageLevel = {
 export function computeOverallScore(analysis: RepoAnalysis): number {
   const weights = {
     files_organized: 0.1,
-    test_suites: 0.15,
     readme: 0.1,
     api_keys: 0.1,
     comments: 0.05,
@@ -54,7 +53,6 @@ export function computeOverallScore(analysis: RepoAnalysis): number {
 export function computeRadarData(analysis: RepoAnalysis): RadarDataPoint[] {
   return [
     { category: "Organization", value: analysis.files_organized.score, fullMark: 100 },
-    { category: "Testing", value: analysis.test_suites.score, fullMark: 100 },
     { category: "Documentation", value: analysis.readme.score, fullMark: 100 },
     { category: "Security", value: analysis.api_keys.score, fullMark: 100 },
     { category: "Code Quality", value: analysis.comments.score, fullMark: 100 },
@@ -89,9 +87,6 @@ export function generateStrengths(analysis: RepoAnalysis): string[] {
   if (analysis.files_organized.score >= 70) {
     strengths.push("Well-organized file structure");
   }
-  if (analysis.test_suites.score >= 70) {
-    strengths.push("Good test coverage");
-  }
   if (analysis.readme.score >= 70) {
     strengths.push("Comprehensive documentation");
   }
@@ -123,9 +118,6 @@ export function generateRedFlags(analysis: RepoAnalysis): string[] {
   if (analysis.api_keys.score < 50) {
     redFlags.push("Potential API key exposure risks");
   }
-  if (analysis.test_suites.score < 30) {
-    redFlags.push("Insufficient test coverage");
-  }
   if (analysis.readme.score < 30) {
     redFlags.push("Missing or incomplete documentation");
   }
@@ -148,9 +140,6 @@ export function generateRedFlags(analysis: RepoAnalysis): string[] {
 export function generateSuggestions(analysis: RepoAnalysis): string[] {
   const suggestions: string[] = [];
 
-  if (analysis.test_suites.score < 70) {
-    suggestions.push("Add more unit and integration tests");
-  }
   if (analysis.readme.score < 70) {
     suggestions.push("Improve README with setup instructions and examples");
   }
@@ -228,9 +217,8 @@ export function generateAIUsageSignals(analysis: RepoAnalysis): MetricSignal[] {
  */
 export function computeProductionReadinessScore(analysis: RepoAnalysis): number {
   const weights = {
-    test_suites: 0.45,
-    api_keys: 0.35,
-    dependencies: 0.2,
+    api_keys: 0.55,
+    dependencies: 0.45,
   };
 
   let totalScore = 0;
