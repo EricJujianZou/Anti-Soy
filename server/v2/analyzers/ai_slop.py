@@ -281,7 +281,7 @@ class AISlopAnalyzer:
             classifier_result,
             features,
             len(redundant_findings),
-            has_emojis=len(emoji_findings) > 0,
+            emoji_count=len(emoji_findings),
         )
         
         # 6. Build StyleFeatures from extracted features
@@ -458,7 +458,7 @@ class AISlopAnalyzer:
         classifier_result: ClassifierResult,
         features: ExtractedFeatures,
         redundant_count: int,
-        has_emojis: bool = False,
+        emoji_count: int = 0,
     ) -> tuple[int, Confidence]:
         """
         Calculate final AI slop score (0-100) and confidence.
@@ -466,7 +466,7 @@ class AISlopAnalyzer:
         Formula:
         - 40% from ML classifier probability
         - 60% from heuristic signals (comment_ratio, name lengths, redundant count)
-        - +15 bonus if ANY emoji found (deterministic, capped at 100)
+        - +15 per emoji occurrence (deterministic, capped at 100)
         
         Positive signals are reported but don't affect score (per user requirement).
         
@@ -528,10 +528,9 @@ class AISlopAnalyzer:
         # Combine scores
         total_score = ml_score + heuristic_score
         
-        # Emoji bonus: +15 if ANY emoji found (deterministic signal)
-        # This is applied AFTER combining ML + heuristics to ensure it dominates
-        if has_emojis:
-            total_score += EMOJI_BONUS
+        # Emoji bonus: +15 per occurrence (deterministic signal, capped at 100)
+        if emoji_count > 0:
+            total_score += EMOJI_BONUS * emoji_count
             heuristic_signals += 1  # Count as a signal for confidence
         
         # Clamp to 0-100
@@ -585,35 +584,29 @@ class AISlopAnalyzer:
         Convert internal findings to schema Finding objects.
         
         Aggregates findings:
-        - Redundant comments grouped by explanation type
+        - Redundant comments compressed into single finding with total count
         - Emojis grouped into single finding with all occurrences
         """
         findings: list[Finding] = []
         
-        # 1. Handle redundant comments (group by explanation type)
+        # 1. Handle redundant comments (compress all into single finding)
         if redundant_findings:
-            grouped: dict[str, list[RedundantCommentFinding]] = {}
-            for f in redundant_findings:
-                if f.explanation not in grouped:
-                    grouped[f.explanation] = []
-                grouped[f.explanation].append(f)
-            
-            for explanation, group in grouped.items():
-                first = group[0]
-                occurrences = [f"{f.file_path}:{f.line_number}" for f in group]
-                snippet_parts = occurrences[:5]
-                snippet = ', '.join(snippet_parts)
-                if len(occurrences) > 5:
-                    snippet += f" ... and {len(occurrences) - 5} more"
-                
-                findings.append(Finding(
-                    type="redundant_comment",
-                    severity=Severity.WARNING,
-                    file=f"Multiple files, first occurrence at {first.file_path}",
-                    line=first.line_number,
-                    snippet=snippet,
-                    explanation=f"{explanation} (found {len(group)} occurrences)",
-                ))
+            count = len(redundant_findings)
+            first = redundant_findings[0]
+            locations = [f"{f.file_path}:{f.line_number}" for f in redundant_findings]
+            shown = locations[:5]
+            snippet = ', '.join(shown)
+            if count > 5:
+                snippet += f" ... and {count - 5} more"
+
+            findings.append(Finding(
+                type="redundant_comment",
+                severity=Severity.WARNING,
+                file=f"Multiple files, first occurrence at {first.file_path}",
+                line=first.line_number,
+                snippet=snippet,
+                explanation=f"Comments that describe obvious code (found {count} occurrences)",
+            ))
         
         # 2. Handle emojis (aggregate all into single finding)
         if emoji_findings:
