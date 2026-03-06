@@ -21,7 +21,6 @@ with open(f"{PARENT_DIRECTORY}/github_username_blacklist.json", "r") as f:
 @dataclass
 class CandidateInfo:
     name: str              # first non-empty line of plaintext
-    university: str | None # regex match, None if not found
     github_profile_url: str | None  # from existing GithubFromResumeDump, None if raises
     project_names: list[str]        # extracted from Projects section, may be empty
 
@@ -36,13 +35,6 @@ class struct_resume_dump:
 class ResumeParseException(Exception):
     pass
 
-@dataclass
-class CandidateInfo:
-    name: str              # first non-empty line of plaintext
-    university: str | None # regex match, None if not found
-    github_profile_url: str | None  # from existing GithubFromResumeDump, None if raises
-    project_names: list[str]        # extracted from Projects section, may be empty
-
 def ExtractCandidateInfo(resume_dump: struct_resume_dump) -> CandidateInfo:
     # Name: first non-empty, non-whitespace line of resume_dump.plaintext
     lines = resume_dump.plaintext.splitlines()
@@ -52,49 +44,27 @@ def ExtractCandidateInfo(resume_dump: struct_resume_dump) -> CandidateInfo:
         if stripped:
             name = stripped
             break
-    
-    # University: regex scan of full plaintext for patterns
-    # We use [^\n\r] to avoid matching across lines
-    university_patterns = [
-        r"University of [A-Z][^\n\r]+",
-        r"[A-Z][^\n\r]+ University",
-        r"[A-Z][^\n\r]+ College",
-        r"[A-Z][^\n\r]+ Institute of Technology",
-        r"\bMIT\b",
-        r"\bETH\b",
-        r"\bCMU\b",
-        r"\bUCLA\b",
-        r"\bUC Berkeley\b",
-        r"\bStanford\b",
-        r"\bHarvard\b"
-    ]
-    university = None
-    for pattern in university_patterns:
-        match = re.search(pattern, resume_dump.plaintext, re.IGNORECASE)
-        if match:
-            university = match.group(0).strip()
-            break
-            
+
     # GitHub profile URL
     try:
         github_profile_url = GithubFromResumeDump(resume_dump)
     except ResumeParseException:
         github_profile_url = None
-        
+
     # Project names
     project_names = []
     # scan plaintext for a section header matching "project" (case-insensitive)
     lines = resume_dump.plaintext.splitlines()
     in_projects_section = False
-    
+
     # Common section headers that might follow projects
     next_section_headers = [r"experience", r"education", r"skills", r"awards", r"certificates", r"interests"]
-    
+
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
             continue
-            
+
         if not in_projects_section:
             if re.search(r"projects", stripped, re.IGNORECASE):
                 in_projects_section = True
@@ -105,21 +75,18 @@ def ExtractCandidateInfo(resume_dump: struct_resume_dump) -> CandidateInfo:
                 if re.fullmatch(header, stripped, re.IGNORECASE) or (stripped.isupper() and len(stripped) > 3):
                     is_next_section = True
                     break
-            
+
             if is_next_section:
                 break
-            
+
             # extract subsequent lines that appear to be project titles
             # (short lines, <=6 words, not all lowercase, before the next section header)
             words = stripped.split()
             if 0 < len(words) <= 6 and not stripped.islower():
-                # Avoid bullet points or single words that might be noise if they are too short
-                # But typically project names are short
                 project_names.append(stripped.lstrip('•-* ').strip())
-                
+
     return CandidateInfo(
         name=name,
-        university=university,
         github_profile_url=github_profile_url,
         project_names=project_names
     )
@@ -271,26 +238,7 @@ def ExtractCandidateInfo(resume_dump: struct_resume_dump) -> CandidateInfo:
             name = line.strip()
             break
             
-    # 2. University: regex scan
-    university = None
-    uni_patterns = [
-        r"University of [\w\s]+",
-        r"[\w\s]+ University",
-        r"[\w\s]+ College",
-        r"[\w\s]+ Institute of Technology",
-        r"\bMIT\b",
-        r"\bETH\b",
-        r"\bStanford\b",
-        r"\bHarvard\b",
-        r"\bBerkeley\b",
-    ]
-    for pattern in uni_patterns:
-        match = re.search(pattern, resume_dump.plaintext, re.IGNORECASE)
-        if match:
-            university = match.group(0).strip()
-            break
-            
-    # 3. GitHub Profile URL
+    # 2. GitHub Profile URL
     github_profile_url = None
     try:
         github_profile_url = GithubFromResumeDump(resume_dump)
@@ -326,11 +274,10 @@ def ExtractCandidateInfo(resume_dump: struct_resume_dump) -> CandidateInfo:
                 
     return CandidateInfo(
         name=name,
-        university=university,
         github_profile_url=github_profile_url,
         project_names=project_names
     )
-    
+
 
 
 # used for unit testing

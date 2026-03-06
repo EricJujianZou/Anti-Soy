@@ -139,7 +139,6 @@ class BatchItem(Base):
     position = Column(Integer, nullable=False)
     filename = Column(String, nullable=False)
     candidate_name = Column(String)
-    candidate_university = Column(String)
     github_profile_url = Column(String)
     repo_url = Column(String)
     status = Column(String, default="pending", nullable=False)  # "pending" | "running" | "completed" | "error"

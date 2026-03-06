@@ -74,7 +74,6 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                 
                 # 5. Update item fields
                 item.candidate_name = candidate_info.name
-                item.candidate_university = candidate_info.university
                 item.github_profile_url = candidate_info.github_profile_url
                 session.commit()
                 

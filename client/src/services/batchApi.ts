@@ -12,7 +12,6 @@ export interface BatchItemStatus {
   position: number;
   filename: string;
   candidate_name?: string | null;
-  candidate_university?: string | null;
   repo_url?: string | null;
   status: "pending" | "running" | "completed" | "error";
   error_message?: string | null;

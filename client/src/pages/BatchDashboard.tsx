@@ -5,7 +5,7 @@ import { useBatchStatus } from "@/hooks/useBatchStatus";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/utils/utils";
-import { Loader2, CheckCircle2, XCircle, ExternalLink, Building2 } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
 import type { BatchItemStatus, BatchVerdict } from "@/services/batchApi";
 
 const VerdictBadge = ({ verdict }: { verdict: BatchVerdict | string | null | undefined }) => {
@@ -106,10 +106,6 @@ const CandidateCard = ({ item, batchPriorities }: { item: BatchItemStatus, batch
               <h3 className="text-lg font-bold text-foreground truncate">
                 {item.candidate_name || item.filename}
               </h3>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                <Building2 className="w-3 h-3" />
-                <span>{isError ? "—" : "University not extracted"}</span>
-              </div>
             </div>
           </div>
 
