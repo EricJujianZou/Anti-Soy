@@ -429,7 +429,6 @@ def get_batch_status(request: Request, batch_id: str):
                 position=item.position,
                 filename=item.filename,
                 candidate_name=item.candidate_name or "Unknown",
-                candidate_university=item.candidate_university,
                 repo_url=item.repo_url,
                 status=item.status,
                 error_message=item.error_message,
