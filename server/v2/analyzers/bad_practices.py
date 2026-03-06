@@ -417,7 +417,9 @@ class BadPracticesAnalyzer:
         findings.extend(self._check_gitignore_issues(repo_data))
         findings.extend(self._check_print_statements(repo_data))
         findings.extend(self._check_todo_comments(repo_data))
-        
+
+        findings = self._compress_findings(findings)
+
         # Count by category
         security_count = sum(1 for f in findings if self._get_category(f.type) == "security")
         robustness_count = sum(1 for f in findings if self._get_category(f.type) == "robustness")
@@ -605,6 +607,48 @@ class BadPracticesAnalyzer:
             ))
 
         return findings
+
+    def _compress_findings(self, findings: list[Finding]) -> list[Finding]:
+        """
+        Compress findings of the same type into a single aggregated Finding.
+
+        Types with count == 1 pass through unchanged.
+        Already-aggregated types (print_statements, todo_comment) will be
+        count=1 in their group since their dedicated methods already aggregate,
+        so they pass through without double-compression.
+        """
+        severity_rank = {Severity.CRITICAL: 2, Severity.WARNING: 1, Severity.INFO: 0}
+
+        grouped: dict[str, list[Finding]] = {}
+        for f in findings:
+            grouped.setdefault(f.type, []).append(f)
+
+        result: list[Finding] = []
+        for ftype, group in grouped.items():
+            if len(group) == 1:
+                result.append(group[0])
+                continue
+
+            count = len(group)
+            first = group[0]
+            highest_severity = max(group, key=lambda f: severity_rank[f.severity]).severity
+
+            locations = [f"{f.file}:{f.line}" for f in group]
+            shown = locations[:5]
+            snippet = ', '.join(shown)
+            if count > 5:
+                snippet += f" ... and {count - 5} more"
+
+            result.append(Finding(
+                type=ftype,
+                severity=highest_severity,
+                file=f"Multiple files, first occurrence at {first.file}",
+                line=first.line,
+                snippet=snippet,
+                explanation=f"{first.explanation} (found {count} occurrences)",
+            ))
+
+        return result
 
     def _check_env_committed(self, repo_data: RepoData) -> list[Finding]:
         """Check if .env file is committed (appears in tree)."""
