@@ -396,7 +396,8 @@ def get_batch_status(request: Request, batch_id: str):
         for item in batch_job.items:
             verdict = None
             standout_features = []
-            
+            overall_score = None
+
             if item.status == "completed" and item.repo:
                 if item.repo.repo_analysis:
                     verdict = Verdict(
@@ -405,7 +406,24 @@ def get_batch_status(request: Request, batch_id: str):
                     )
                 if item.repo.repo_evaluation:
                     standout_features = json.loads(item.repo.repo_evaluation.standout_features)
-            
+
+                # Compute overall score (0-100)
+                if item.repo.repo_analysis and item.repo.repo_evaluation:
+                    score = 0
+                    # solves_real_problem: 35 points
+                    bv = json.loads(item.repo.repo_evaluation.business_value)
+                    if bv.get("solves_real_problem", False):
+                        score += 35
+                    # code_quality: 0-25 points
+                    score += round(item.repo.repo_analysis.code_quality_score / 100 * 25)
+                    # standout_features: 20 points if non-empty
+                    if standout_features:
+                        score += 20
+                    # AI bonus: 20 points if ai_slop_score < 50
+                    if item.repo.repo_analysis.ai_slop_score < 50:
+                        score += 20
+                    overall_score = score
+
             item_statuses.append(BatchItemStatus(
                 id=item.id,
                 position=item.position,
@@ -417,7 +435,8 @@ def get_batch_status(request: Request, batch_id: str):
                 error_message=item.error_message,
                 repo_id=item.repo_id,
                 verdict=verdict,
-                standout_features=standout_features
+                standout_features=standout_features,
+                overall_score=overall_score,
             ))
             
         return BatchStatusResponse(

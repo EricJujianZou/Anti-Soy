@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useBatchStatus } from "@/hooks/useBatchStatus";
@@ -94,13 +95,21 @@ const CandidateCard = ({ item, batchPriorities }: { item: BatchItemStatus, batch
         </div>
 
         <div className="space-y-3">
-          <div>
-            <h3 className="text-lg font-bold text-foreground truncate">
-              {item.candidate_name || item.filename}
-            </h3>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-              <Building2 className="w-3 h-3" />
-              <span>{isError ? "—" : "University not extracted"}</span>
+          <div className="flex items-start gap-3">
+            {isCompleted && item.overall_score != null && (
+              <div className="flex-shrink-0 flex items-baseline gap-0.5">
+                <span className="text-3xl font-bold text-primary">{item.overall_score}</span>
+                <span className="text-xs text-muted-foreground">/100</span>
+              </div>
+            )}
+            <div className="min-w-0">
+              <h3 className="text-lg font-bold text-foreground truncate">
+                {item.candidate_name || item.filename}
+              </h3>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                <Building2 className="w-3 h-3" />
+                <span>{isError ? "—" : "University not extracted"}</span>
+              </div>
             </div>
           </div>
 
@@ -135,6 +144,24 @@ const BatchDashboard = () => {
   const { batchId } = useParams<{ batchId: string }>();
   const { data, isLoading, error } = useBatchStatus(batchId || "");
   const navigate = useNavigate();
+
+  const sortedItems = useMemo(() => {
+    if (!data?.items) return [];
+    return [...data.items].sort((a, b) => {
+      const statusOrder = (s: string) => {
+        if (s === "completed") return 0;
+        if (s === "pending" || s === "running") return 1;
+        return 2; // error
+      };
+      const orderA = statusOrder(a.status);
+      const orderB = statusOrder(b.status);
+      if (orderA !== orderB) return orderA - orderB;
+      if (a.status === "completed" && b.status === "completed") {
+        return (b.overall_score ?? 0) - (a.overall_score ?? 0);
+      }
+      return a.position - b.position;
+    });
+  }, [data?.items]);
 
   // Get priorities from response or fallback to localStorage
   const priorities = data?.priorities || (() => {
@@ -212,7 +239,7 @@ const BatchDashboard = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {data?.items.map((item, index) => (
+            {sortedItems.map((item, index) => (
               <CandidateCard key={item.id ?? `item-${index}`} item={item} batchPriorities={priorities} />
             ))}
           </div>

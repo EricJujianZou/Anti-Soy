@@ -286,6 +286,7 @@ class BatchItemStatus(BaseModel):
     repo_id: int | None
     verdict: Verdict | None
     standout_features: list[str] = Field(default_factory=list)
+    overall_score: int | None = None
 
 
 class BatchStatusResponse(BaseModel):

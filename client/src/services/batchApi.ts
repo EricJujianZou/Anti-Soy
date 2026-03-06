@@ -19,6 +19,7 @@ export interface BatchItemStatus {
   repo_id?: number | null;
   verdict?: BatchVerdict | null;
   standout_features?: string[];
+  overall_score?: number | null;
 }
 
 export interface BatchStatusResponse {
