@@ -13,7 +13,7 @@ from v2.feature_extractor import extract_features
 from v2.analyzers import analyze_ai_slop, analyze_bad_practices, analyze_code_quality
 from v2.schemas import Verdict, VALID_PRIORITIES, DEFAULT_PRIORITIES
 from v2.clone_script import clone_repo
-from prompt_modules import build_evaluation_prompt, build_questions_prompt
+from prompt_modules import build_evaluation_prompt, build_questions_prompt, HARDCODED_INTERVIEW_QUESTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,8 @@ def run_evaluation_pipeline(
     bad_practices,
     code_quality,
     extracted_data,
-    priorities: list[str] = None
+    priorities: list[str] = None,
+    use_generic_questions: bool = False,
 ):
     """
     Runs Gemini evaluation and returns (business_value, standout_features, is_rejected, rejection_reason, interview_questions)
@@ -239,12 +240,15 @@ def run_evaluation_pipeline(
         rejection_reason = "AI-generated code and nothing stands out"
         
     # 2. Interview Questions
+    if use_generic_questions:
+        return business_value, standout_features, is_rejected, rejection_reason, HARDCODED_INTERVIEW_QUESTIONS
+
     questions_prompt = build_questions_prompt(
         repo_url=repo_url, repo_name=repo_name,
         ai_slop_result=ai_slop, bad_practices_result=bad_practices, code_quality_result=code_quality,
         file_tree=file_tree, findings_context=findings_context, priorities=priorities
     )
-    
+
     questions_list = []
     for attempt in range(2):
         try:
@@ -257,7 +261,7 @@ def run_evaluation_pipeline(
             break
         except Exception as e:
             logger.warning(f"Gemini questions error (attempt {attempt + 1}/2): {e}")
-            
+
     return business_value, standout_features, is_rejected, rejection_reason, questions_list
 
 def save_evaluation_results(
