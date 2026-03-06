@@ -76,7 +76,7 @@ EMOJI_PATTERN = re.compile(
 )
 
 # Bonus points for emoji detection (deterministic, not ML-based)
-EMOJI_BONUS = 80  # +80 to AI score if ANY emoji found in code
+EMOJI_BONUS = 15  # +15 to AI score if ANY emoji found in code
 
 # AI instruction files (positive signal - indicates disciplined AI use)
 AI_INSTRUCTION_FILES = [
@@ -466,7 +466,7 @@ class AISlopAnalyzer:
         Formula:
         - 40% from ML classifier probability
         - 60% from heuristic signals (comment_ratio, name lengths, redundant count)
-        - +80 bonus if ANY emoji found (deterministic, capped at 100)
+        - +15 bonus if ANY emoji found (deterministic, capped at 100)
         
         Positive signals are reported but don't affect score (per user requirement).
         
@@ -528,7 +528,7 @@ class AISlopAnalyzer:
         # Combine scores
         total_score = ml_score + heuristic_score
         
-        # Emoji bonus: +80 if ANY emoji found (deterministic signal)
+        # Emoji bonus: +15 if ANY emoji found (deterministic signal)
         # This is applied AFTER combining ML + heuristics to ensure it dominates
         if has_emojis:
             total_score += EMOJI_BONUS
