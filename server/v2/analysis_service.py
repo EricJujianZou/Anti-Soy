@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from models import Repo, RepoAnalysis, RepoEvaluation, User
-from v2.data_extractor import extract_repo_data
+from v2.data_extractor import extract_repo_data, is_test_file
 from v2.feature_extractor import extract_features
 from v2.analyzers import analyze_ai_slop, analyze_bad_practices, analyze_code_quality
 from v2.schemas import Verdict, VALID_PRIORITIES, DEFAULT_PRIORITIES
@@ -95,18 +95,26 @@ def compute_verdict(ai_score: int, bad_practices_score: int, quality_score: int)
 
 def _build_findings_context(bad_practices_result, code_quality_result):
     findings_context = []
-    for finding in bad_practices_result.findings[:5]:
+    for finding in bad_practices_result.findings:
+        if is_test_file(finding.file):
+            continue
         findings_context.append({
             "category": "Bad Practice", "type": finding.type, "severity": finding.severity,
             "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
             "explanation": finding.explanation,
         })
-    for finding in code_quality_result.findings[:5]:
+        if len(findings_context) >= 5:
+            break
+    for finding in code_quality_result.findings:
+        if is_test_file(finding.file):
+            continue
         findings_context.append({
             "category": "Code Quality", "type": finding.type, "severity": finding.severity,
             "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
             "explanation": finding.explanation,
         })
+        if len(findings_context) >= 10:
+            break
     return findings_context
 
 def run_analysis_pipeline(repo_url: str):

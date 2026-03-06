@@ -531,18 +531,6 @@ const RepoAnalysis = () => {
                       </p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground">Error Handling</p>
-                      <p className="font-medium">
-                        {analysis.code_quality.error_handling}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Logging</p>
-                      <p className="font-medium">
-                        {analysis.code_quality.logging_quality}%
-                      </p>
-                    </div>
-                    <div>
                       <p className="text-muted-foreground">Dependencies</p>
                       <p className="font-medium">
                         {analysis.code_quality.dependency_health}%
