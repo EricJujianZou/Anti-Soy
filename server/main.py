@@ -308,7 +308,8 @@ async def upload_batch(
     request: Request,
     background_tasks: BackgroundTasks,
     resumes: list[UploadFile] = File(...),
-    priorities: str = Form(None) # Passed as comma-separated string or JSON
+    priorities: str = Form(None), # Passed as comma-separated string or JSON
+    use_generic_questions: str = Form(None),
 ):
     """
     Upload a batch of resumes for background processing.
@@ -338,16 +339,19 @@ async def upload_batch(
     if not priority_list:
         priority_list = DEFAULT_PRIORITIES
 
+    generic_questions_flag = 1 if use_generic_questions and use_generic_questions.lower() == "true" else 0
+
     import uuid
     batch_id = str(uuid.uuid4())
-    
+
     with Session(engine) as session:
         # 3. Create BatchJob
         batch_job = BatchJob(
-            id=batch_id, 
-            total_items=len(resumes), 
+            id=batch_id,
+            total_items=len(resumes),
             status="pending",
-            priorities=json.dumps(priority_list)
+            priorities=json.dumps(priority_list),
+            use_generic_questions=generic_questions_flag,
         )
         session.add(batch_job)
         
@@ -367,7 +371,7 @@ async def upload_batch(
         session.commit()
         
         # 5. Kick off background task
-        background_tasks.add_task(process_batch, batch_id, priority_list)
+        background_tasks.add_task(process_batch, batch_id, priority_list, bool(generic_questions_flag))
         
         return BatchUploadResponse(batch_id=batch_id)
 
@@ -437,7 +441,7 @@ async def startup_event():
         for job in unfinished_jobs:
             logger.info(f"Resuming batch job {job.id} on startup")
             priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
-            asyncio.create_task(process_batch(job.id, priorities))
+            asyncio.create_task(process_batch(job.id, priorities, bool(job.use_generic_questions)))
 
 
 @app.post("/analyze-stream")

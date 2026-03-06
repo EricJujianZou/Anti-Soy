@@ -132,12 +132,11 @@ class AISlop(BaseModel):
 class BadPractices(BaseModel):
     """Bad Practices Detector results"""
     score: int = Field(..., ge=0, le=100, description="Bad practices score (higher = worse)")
-    
+
     # Category breakdowns (counts of issues found)
     security_issues: int = Field(..., ge=0, description="Count of security issues (SQL injection, hardcoded secrets, CORS, etc.)")
-    robustness_issues: int = Field(..., ge=0, description="Count of robustness issues (no timeouts, silent errors, no retry, etc.)")
-    hygiene_issues: int = Field(..., ge=0, description="Count of hygiene issues (.env committed, print statements, etc.)")
-    
+    hygiene_issues: int = Field(..., ge=0, description="Count of hygiene issues (.env committed, commented-out code, etc.)")
+
     # All findings with evidence
     findings: list[Finding] = Field(default_factory=list, description="All bad practice findings with code snippets")
 
@@ -149,15 +148,12 @@ class BadPractices(BaseModel):
 class CodeQuality(BaseModel):
     """Code Quality Analyzer results"""
     score: int = Field(..., ge=0, le=100, description="Code quality score (higher = better)")
-    
+
     # Individual metric scores (0-100 each)
     files_organized: int = Field(..., ge=0, le=100, description="How well organized the file structure is")
-    test_coverage: int = Field(..., ge=0, le=100, description="Test presence and quality score")
     readme_quality: int = Field(..., ge=0, le=100, description="README completeness and clarity")
-    error_handling: int = Field(..., ge=0, le=100, description="Quality of error handling patterns")
-    logging_quality: int = Field(..., ge=0, le=100, description="Logging vs print usage quality")
     dependency_health: int = Field(..., ge=0, le=100, description="Dependency management quality")
-    
+
     # All findings with evidence
     findings: list[Finding] = Field(default_factory=list, description="Quality issues and areas for improvement")
 

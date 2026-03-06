@@ -9,6 +9,39 @@ Priority modules: code_quality, security, originality, production_readiness, ai_
 
 import json
 
+HARDCODED_INTERVIEW_QUESTIONS = [
+    {
+        "question": "Walk me through the architecture of this project. Why did you organize it this way?",
+        "based_on": "Project structure and design decisions",
+        "probes": "system_design",
+        "category": "design_choice",
+    },
+    {
+        "question": "What was the most challenging technical problem you solved in this project?",
+        "based_on": "Overall technical complexity",
+        "probes": "problem_solving",
+        "category": "technical_depth",
+    },
+    {
+        "question": "If this project had to handle 100x the current load, what would break first and how would you fix it?",
+        "based_on": "Scalability considerations",
+        "probes": "scaling_awareness",
+        "category": "technical_depth",
+    },
+    {
+        "question": "What security considerations did you think about when building this?",
+        "based_on": "Security awareness",
+        "probes": "security_awareness",
+        "category": "code_issue",
+    },
+    {
+        "question": "Who is the target user for this project, and how did you validate that this solves their problem?",
+        "based_on": "Business value and user research",
+        "probes": "product_thinking",
+        "category": "business_value",
+    },
+]
+
 ALL_PRIORITIES = [
     "code_quality",
     "security",

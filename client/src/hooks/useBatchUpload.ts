@@ -46,12 +46,12 @@ export const useBatchUpload = () => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const handleUpload = async (priorities: PriorityKey[]) => {
+  const handleUpload = async (priorities: PriorityKey[], useGenericQuestions?: boolean) => {
     if (files.length === 0) return;
 
     setIsUploading(true);
     try {
-      const { batch_id } = await uploadBatch(files, priorities);
+      const { batch_id } = await uploadBatch(files, priorities, useGenericQuestions);
       localStorage.setItem("antisoy_batch_id", batch_id);
       localStorage.setItem(`antisoy_batch_${batch_id}_priorities`, JSON.stringify(priorities));
       navigate(`/dashboard/${batch_id}`, { replace: true });
