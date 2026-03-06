@@ -2,7 +2,7 @@
 Code Quality Analyzer for Anti-Soy V2
 
 Evaluates overall code quality based on organization, testing, documentation,
-error handling, and dependency management.
+and dependency management.
 
 Unlike AI Slop and Bad Practices (where higher = worse), Code Quality uses
 higher = better scoring to match intuition.
@@ -11,8 +11,6 @@ Categories:
 - files_organized: Project structure, separation of concerns
 - test_coverage: Test file presence and ratio
 - readme_quality: README completeness and sections
-- error_handling: Try/except patterns, proper error handling
-- logging_quality: Logging vs print statement usage
 - dependency_health: Lock files, pinned versions, dependency count
 
 Output matches schemas.CodeQuality exactly.
@@ -31,12 +29,10 @@ from ..data_extractor import RepoData, is_code_file, is_test_file
 
 # Weight for overall score calculation (must sum to 1.0)
 METRIC_WEIGHTS = {
-    "files_organized": 0.15,
-    "test_coverage": 0.20,
-    "readme_quality": 0.15,
-    "error_handling": 0.20,
-    "logging_quality": 0.10,
-    "dependency_health": 0.20,
+    "files_organized": 0.21,
+    "test_coverage": 0.29,
+    "readme_quality": 0.21,
+    "dependency_health": 0.29,
 }
 
 # README quality markers
@@ -101,40 +97,32 @@ class CodeQualityAnalyzer:
             CodeQuality schema object ready for API response
         """
         findings: list[Finding] = []
-        
+
         # Calculate each metric (0-100, higher = better)
         files_organized, org_findings = self._analyze_organization(repo_data)
         test_coverage, test_findings = self._analyze_test_coverage(repo_data)
         readme_quality, readme_findings = self._analyze_readme(repo_data)
-        error_handling, error_findings = self._analyze_error_handling(repo_data)
-        logging_quality, logging_findings = self._analyze_logging(repo_data)
         dependency_health, dep_findings = self._analyze_dependencies(repo_data)
-        
+
         # Collect all findings
         findings.extend(org_findings)
         findings.extend(test_findings)
         findings.extend(readme_findings)
-        findings.extend(error_findings)
-        findings.extend(logging_findings)
         findings.extend(dep_findings)
-        
+
         # Calculate overall score (weighted average)
         overall_score = int(
             files_organized * METRIC_WEIGHTS["files_organized"] +
             test_coverage * METRIC_WEIGHTS["test_coverage"] +
             readme_quality * METRIC_WEIGHTS["readme_quality"] +
-            error_handling * METRIC_WEIGHTS["error_handling"] +
-            logging_quality * METRIC_WEIGHTS["logging_quality"] +
             dependency_health * METRIC_WEIGHTS["dependency_health"]
         )
-        
+
         return CodeQuality(
             score=overall_score,
             files_organized=files_organized,
             test_coverage=test_coverage,
             readme_quality=readme_quality,
-            error_handling=error_handling,
-            logging_quality=logging_quality,
             dependency_health=dependency_health,
             findings=findings,
         )
@@ -411,261 +399,6 @@ class CodeQualityAnalyzer:
                 bonus_found += 1
         
         score += min(20, bonus_found * 5)  # Up to 20 bonus points
-        
-        return max(0, min(100, score)), findings
-    
-    # =========================================================================
-    # ERROR HANDLING (0-100)
-    # =========================================================================
-    
-    def _analyze_error_handling(self, repo_data: RepoData) -> tuple[int, list[Finding]]:
-        """
-        Analyze error handling patterns.
-        
-        Checks for:
-        - Presence of try/except or try/catch blocks
-        - Specific exception types (not bare except)
-        - Error logging in catch blocks
-        """
-        findings: list[Finding] = []
-        
-        total_files = 0
-        files_with_error_handling = 0
-        good_error_handling = 0
-        
-        # Collect bare except occurrences with evidence
-        bare_except_occurrences: list[tuple[str, int, str]] = []  # (file, line, snippet)
-        
-        for file_path, content in repo_data.files.items():
-            if not is_code_file(file_path):
-                continue
-            
-            # Skip test files for error handling analysis
-            if is_test_file(file_path):
-                continue
-            
-            total_files += 1
-            lines = content.split("\n")
-            
-            # Python error handling
-            if file_path.endswith(".py"):
-                has_try = "try:" in content
-                if has_try:
-                    files_with_error_handling += 1
-
-                    # Check for specific exceptions (good)
-                    specific_except = re.search(
-                        r"except\s+(?:[\w.]+(?:\s*,\s*[\w.]+)*|\([\w.\s,]+\))\s*(?:as\s+\w+)?:",
-                        content
-                    )
-                    if specific_except:
-                        good_error_handling += 1
-
-                    # Find bare excepts with line numbers and snippets
-                    for match in re.finditer(r"except\s*:", content):
-                        line_num = content[:match.start()].count("\n") + 1
-                        # Get snippet (2 lines before, the line, 2 lines after)
-                        start_line = max(0, line_num - 2)
-                        end_line = min(len(lines), line_num + 3)
-                        snippet = "\n".join(lines[start_line:end_line])
-                        if len(snippet) > 200:
-                            snippet = snippet[:200] + "..."
-                        bare_except_occurrences.append((file_path, line_num, snippet))
-
-            # JavaScript/TypeScript error handling
-            elif file_path.endswith((".js", ".ts", ".jsx", ".tsx")):
-                has_try = "try {" in content or "try{" in content
-                if has_try:
-                    files_with_error_handling += 1
-
-                    # Check for non-empty catch
-                    catch_with_body = re.search(r"catch\s*\([^)]+\)\s*\{[^}]+\}", content)
-                    if catch_with_body:
-                        good_error_handling += 1
-
-            # Go error handling (uses if err != nil, NOT try/catch)
-            elif file_path.endswith(".go"):
-                has_err_check = "if err != nil" in content or "if err != nil {" in content
-                if has_err_check:
-                    files_with_error_handling += 1
-                    # Go idiomatic error handling is always "good"
-                    good_error_handling += 1
-
-            # C# error handling
-            elif file_path.endswith(".cs"):
-                has_try = "try" in content and "catch" in content
-                if has_try:
-                    files_with_error_handling += 1
-
-                    # Check for specific exception types (good)
-                    specific_catch = re.search(
-                        r"catch\s*\(\s*(?!Exception\s)(\w+Exception|\w+Error)\s",
-                        content
-                    )
-                    if specific_catch:
-                        good_error_handling += 1
-        
-        if total_files == 0:
-            return 50, findings  # No files to analyze
-        
-        # Calculate score
-        handling_ratio = files_with_error_handling / total_files if total_files > 0 else 0
-        
-        if files_with_error_handling == 0:
-            score = 30  # Base score, error handling not always needed
-        else:
-            # Score based on error handling presence and quality
-            score = 40 + int(handling_ratio * 30)  # 40-70 based on coverage
-            
-            # Bonus for good error handling (specific exceptions)
-            if good_error_handling > 0:
-                quality_ratio = good_error_handling / files_with_error_handling
-                score += int(quality_ratio * 30)  # Up to 30 bonus
-        
-        # Penalty for bare excepts - create finding with evidence
-        bare_except_count = len(bare_except_occurrences)
-        if bare_except_count > 0:
-            if bare_except_count > 3:
-                score -= 15
-            
-            # Get first occurrence as example snippet
-            example_file, example_line, example_snippet = bare_except_occurrences[0]
-            
-            # Collect all line numbers for the explanation
-            locations = [f"{f}:{l}" for f, l, _ in bare_except_occurrences[:5]]  # Max 5 locations
-            if bare_except_count > 5:
-                locations.append(f"... and {bare_except_count - 5} more")
-            
-            findings.append(Finding(
-                type="bare_except",
-                severity=Severity.WARNING if bare_except_count > 3 else Severity.INFO,
-                file=example_file,
-                line=example_line,
-                snippet=example_snippet,
-                explanation=f"Found {bare_except_count} bare 'except:' statement(s). Locations: {', '.join(locations)}. Use specific exception types for better error handling.",
-            ))
-        
-        return max(0, min(100, score)), findings
-    
-    # =========================================================================
-    # LOGGING QUALITY (0-100)
-    # =========================================================================
-    
-    def _analyze_logging(self, repo_data: RepoData) -> tuple[int, list[Finding]]:
-        """
-        Analyze logging practices.
-        
-        Checks for:
-        - Proper logging module usage
-        - Print statement usage (should be minimal in prod code)
-        """
-        findings: list[Finding] = []
-        
-        has_logging_import = False
-        uses_logging = False
-        print_count = 0
-        console_log_count = 0
-        total_code_files = 0
-        
-        for file_path, content in repo_data.files.items():
-            if not is_code_file(file_path):
-                continue
-            
-            # Skip test files
-            if is_test_file(file_path):
-                continue
-            
-            total_code_files += 1
-            
-            # Python
-            if file_path.endswith(".py"):
-                if "import logging" in content or "from logging" in content:
-                    has_logging_import = True
-                
-                if re.search(r"logging\.(debug|info|warning|error|critical|exception)\(", content):
-                    uses_logging = True
-                
-                # Count print statements (excluding commented lines)
-                for line in content.split("\n"):
-                    stripped = line.strip()
-                    if stripped.startswith("#"):
-                        continue
-                    if re.search(r"^\s*print\s*\(", line):
-                        print_count += 1
-            
-            # JavaScript/TypeScript
-            elif file_path.endswith((".js", ".ts", ".jsx", ".tsx")):
-                # Check for logger imports
-                if re.search(r"import.*(?:winston|pino|bunyan|log4js|logger)", content, re.IGNORECASE):
-                    has_logging_import = True
-                    uses_logging = True
-
-                # Count console.log (excluding commented)
-                for line in content.split("\n"):
-                    stripped = line.strip()
-                    if stripped.startswith("//"):
-                        continue
-                    if "console.log(" in line:
-                        console_log_count += 1
-
-            # Go
-            elif file_path.endswith(".go"):
-                if '"log"' in content or '"log/slog"' in content or "logrus" in content or "zap" in content:
-                    has_logging_import = True
-                if re.search(r"(?:log|logger|slog)\.\w+\(", content):
-                    uses_logging = True
-                # Count fmt.Print (Go equivalent of print statements)
-                for line in content.split("\n"):
-                    stripped = line.strip()
-                    if stripped.startswith("//"):
-                        continue
-                    if re.search(r"fmt\.Print(?:ln|f)?\s*\(", line):
-                        print_count += 1
-
-            # C#
-            elif file_path.endswith(".cs"):
-                if re.search(r"(?:ILogger|ILoggerFactory|using.*(?:Serilog|NLog|log4net|Microsoft\.Extensions\.Logging))", content):
-                    has_logging_import = True
-                if re.search(r"(?:_?logger|_?log)\.\w+\(", content):
-                    uses_logging = True
-                # Count Console.Write (C# equivalent of print statements)
-                for line in content.split("\n"):
-                    stripped = line.strip()
-                    if stripped.startswith("//"):
-                        continue
-                    if "Console.Write" in line:
-                        print_count += 1
-        
-        if total_code_files == 0:
-            return 50, findings
-        
-        # Calculate score
-        total_prints = print_count + console_log_count
-        
-        if uses_logging:
-            score = 80
-            if total_prints < 5:
-                score = 100
-            elif total_prints < 15:
-                score = 90
-        elif has_logging_import:
-            score = 60
-        else:
-            # No logging at all
-            if total_prints == 0:
-                score = 50  # Could be a small project
-            elif total_prints < 10:
-                score = 40
-            else:
-                score = 20
-                findings.append(Finding(
-                    type="print_over_logging",
-                    severity=Severity.INFO,
-                    file="(multiple files)",
-                    line=1,
-                    snippet=f"Found {total_prints} print/console.log statements",
-                    explanation="Using print statements instead of proper logging. Consider using logging module for production code.",
-                ))
         
         return max(0, min(100, score)), findings
     

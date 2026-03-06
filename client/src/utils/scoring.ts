@@ -26,9 +26,7 @@ export function computeOverallScore(analysis: RepoAnalysis): number {
     test_suites: 0.15,
     readme: 0.1,
     api_keys: 0.1,
-    error_handling: 0.15,
     comments: 0.05,
-    print_or_logging: 0.05,
     dependencies: 0.05,
     commit_density: 0.1,
     commit_lines: 0.05,
@@ -59,7 +57,6 @@ export function computeRadarData(analysis: RepoAnalysis): RadarDataPoint[] {
     { category: "Testing", value: analysis.test_suites.score, fullMark: 100 },
     { category: "Documentation", value: analysis.readme.score, fullMark: 100 },
     { category: "Security", value: analysis.api_keys.score, fullMark: 100 },
-    { category: "Error Handling", value: analysis.error_handling.score, fullMark: 100 },
     { category: "Code Quality", value: analysis.comments.score, fullMark: 100 },
   ];
 }
@@ -101,9 +98,6 @@ export function generateStrengths(analysis: RepoAnalysis): string[] {
   if (analysis.api_keys.score >= 80) {
     strengths.push("Secure API key handling");
   }
-  if (analysis.error_handling.score >= 70) {
-    strengths.push("Robust error handling");
-  }
   if (analysis.commit_density.score >= 70) {
     strengths.push("Consistent commit history");
   }
@@ -131,9 +125,6 @@ export function generateRedFlags(analysis: RepoAnalysis): string[] {
   }
   if (analysis.test_suites.score < 30) {
     redFlags.push("Insufficient test coverage");
-  }
-  if (analysis.error_handling.score < 40) {
-    redFlags.push("Weak error handling");
   }
   if (analysis.readme.score < 30) {
     redFlags.push("Missing or incomplete documentation");
@@ -163,9 +154,6 @@ export function generateSuggestions(analysis: RepoAnalysis): string[] {
   if (analysis.readme.score < 70) {
     suggestions.push("Improve README with setup instructions and examples");
   }
-  if (analysis.error_handling.score < 70) {
-    suggestions.push("Implement more comprehensive error handling");
-  }
   if (analysis.comments.score < 50) {
     suggestions.push("Add meaningful code comments for complex logic");
   }
@@ -190,22 +178,6 @@ export function generateSuggestions(analysis: RepoAnalysis): string[] {
  */
 export function generateProductionSignals(analysis: RepoAnalysis): MetricSignal[] {
   const signals: MetricSignal[] = [];
-
-  // Error handling signal
-  const errorScore = analysis.error_handling.score;
-  signals.push({
-    label: "Error Handling",
-    value: errorScore >= 70 ? "Robust" : errorScore >= 40 ? "Basic" : "Needs Work",
-    tone: errorScore >= 70 ? "good" : errorScore >= 40 ? "warn" : "bad",
-  });
-
-  // Logging signal
-  const loggingScore = analysis.print_or_logging.score;
-  signals.push({
-    label: "Logging",
-    value: loggingScore >= 70 ? "Production-ready" : loggingScore >= 40 ? "Basic" : "Debug only",
-    tone: loggingScore >= 70 ? "good" : loggingScore >= 40 ? "warn" : "bad",
-  });
 
   // Dependencies signal
   const depsScore = analysis.dependencies.score;
@@ -256,11 +228,9 @@ export function generateAIUsageSignals(analysis: RepoAnalysis): MetricSignal[] {
  */
 export function computeProductionReadinessScore(analysis: RepoAnalysis): number {
   const weights = {
-    error_handling: 0.3,
-    test_suites: 0.25,
-    api_keys: 0.2,
-    print_or_logging: 0.15,
-    dependencies: 0.1,
+    test_suites: 0.45,
+    api_keys: 0.35,
+    dependencies: 0.2,
   };
 
   let totalScore = 0;
