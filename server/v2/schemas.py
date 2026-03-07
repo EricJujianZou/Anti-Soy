@@ -205,6 +205,10 @@ class AnalyzeRequest(BaseModel):
         default=None,
         description="Evaluation priorities to weight. Options: code_quality, security, originality, production_readiness, ai_detection. Defaults to all if omitted."
     )
+    skip_questions: bool = Field(
+        default=False,
+        description="If true, skip the interview questions LLM call (used by duo scan)."
+    )
 
 
 # =============================================================================
@@ -301,3 +305,30 @@ class BatchStatusResponse(BaseModel):
 class BatchUploadResponse(BaseModel):
     """Response for POST /batch/upload"""
     batch_id: str
+
+
+# =============================================================================
+# COMPATIBILITY (DUO SCAN)
+# =============================================================================
+
+class CompatibilityCallout(BaseModel):
+    """A single callout — either a strength or a flag."""
+    type: str = Field(..., description="'strength' or 'flag'")
+    message: str = Field(..., description="Short description of the callout")
+
+
+class CompatibilityRequest(BaseModel):
+    """Request body for POST /compatibility endpoint."""
+    analysis_a: dict = Field(..., description="Full AnalysisResponse dict for person A")
+    evaluation_a: dict | None = Field(None, description="Evaluation data for person A (business_value, standout_features, is_rejected)")
+    analysis_b: dict = Field(..., description="Full AnalysisResponse dict for person B")
+    evaluation_b: dict | None = Field(None, description="Evaluation data for person B")
+    hackathon_context: str | None = Field(None, description="Optional hackathon theme/focus", max_length=100)
+
+
+class CompatibilityResponse(BaseModel):
+    """Response for POST /compatibility endpoint."""
+    score: int = Field(..., ge=0, le=100, description="Compatibility score 0-100")
+    score_label: str = Field(..., description="Human-readable label (e.g. 'Strong Pair', 'Good Match')")
+    narrative: str = Field(..., description="2-3 sentence LLM-generated compatibility narrative")
+    callouts: list[CompatibilityCallout] = Field(default_factory=list, description="Strengths and flags")

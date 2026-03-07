@@ -192,6 +192,7 @@ def run_evaluation_pipeline(
     extracted_data,
     priorities: list[str] = None,
     use_generic_questions: bool = False,
+    skip_questions: bool = False,
 ):
     """
     Runs Gemini evaluation and returns (business_value, standout_features, is_rejected, rejection_reason, interview_questions)
@@ -240,6 +241,9 @@ def run_evaluation_pipeline(
         rejection_reason = "AI-generated code and nothing stands out"
         
     # 2. Interview Questions
+    if skip_questions:
+        return business_value, standout_features, is_rejected, rejection_reason, []
+
     if use_generic_questions:
         return business_value, standout_features, is_rejected, rejection_reason, HARDCODED_INTERVIEW_QUESTIONS
 

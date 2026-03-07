@@ -278,6 +278,72 @@ Return ONLY the JSON object, no other text or markdown formatting."""
 
 
 # =============================================================================
+# COMPATIBILITY NARRATIVE PROMPT
+# =============================================================================
+
+COMPATIBILITY_SYSTEM_PROMPT = """You are evaluating hackathon team compatibility. Be direct and actionable. Do not roast. Do not be vague."""
+
+COMPATIBILITY_USER_PROMPT = """Two developers are considering teaming up for a hackathon. Evaluate their compatibility.
+
+PERSON A:
+- Verdict: {verdict_a}
+- Top Languages: {langs_a}
+- Standout Features: {standout_a}
+
+PERSON B:
+- Verdict: {verdict_b}
+- Top Languages: {langs_b}
+- Standout Features: {standout_b}
+
+COMPATIBILITY SCORE: {score}/100 ({score_label})
+
+KEY OBSERVATIONS:
+{callouts_text}
+{context_line}
+Write 2-3 sentences describing how well this pair would collaborate at a hackathon. No lists, no markdown headers. Be specific about what they bring to the table."""
+
+
+def build_compatibility_prompt(
+    analysis_a: dict,
+    eval_a: dict | None,
+    analysis_b: dict,
+    eval_b: dict | None,
+    score: int,
+    score_label: str,
+    callouts: list[dict],
+    hackathon_context: str | None = None,
+) -> tuple[str, str]:
+    """
+    Build system + user prompts for compatibility narrative.
+    Returns (system_prompt, user_prompt).
+    """
+    langs_a = list(analysis_a.get("repo", {}).get("languages", {}).keys())[:3]
+    langs_b = list(analysis_b.get("repo", {}).get("languages", {}).keys())[:3]
+    verdict_a = analysis_a.get("verdict", {}).get("type", "Unknown")
+    verdict_b = analysis_b.get("verdict", {}).get("type", "Unknown")
+    standout_a = ", ".join(eval_a.get("standout_features", [])) if eval_a else "None identified"
+    standout_b = ", ".join(eval_b.get("standout_features", [])) if eval_b else "None identified"
+
+    callouts_text = "\n".join(f"- [{c['type'].upper()}] {c['message']}" for c in callouts) or "- No specific observations"
+    context_line = f"\nHACKATHON CONTEXT: {hackathon_context}\nFactor the hackathon theme into your assessment.\n" if hackathon_context else ""
+
+    user_prompt = COMPATIBILITY_USER_PROMPT.format(
+        verdict_a=verdict_a,
+        langs_a=", ".join(langs_a) or "Unknown",
+        standout_a=standout_a,
+        verdict_b=verdict_b,
+        langs_b=", ".join(langs_b) or "Unknown",
+        standout_b=standout_b,
+        score=score,
+        score_label=score_label,
+        callouts_text=callouts_text,
+        context_line=context_line,
+    )
+
+    return COMPATIBILITY_SYSTEM_PROMPT, user_prompt
+
+
+# =============================================================================
 # ASSEMBLY FUNCTIONS
 # =============================================================================
 
