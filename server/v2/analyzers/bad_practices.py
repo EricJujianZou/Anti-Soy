@@ -7,8 +7,7 @@ know to prompt for them.
 
 Categories:
 - Security: No input validation, SQL injection, hardcoded secrets, CORS wildcard, no auth
-- Robustness: No timeout on HTTP calls, silent error swallowing, no retry logic
-- Hygiene: .env committed, lock file issues, print statements in prod code
+- Hygiene: .env committed, lock file issues, commented-out code
 
 Output matches schemas.BadPractices exactly.
 """
@@ -181,143 +180,12 @@ SECURITY_PATTERNS = [
 ]
 
 # -----------------------------------------------------------------------------
-# ROBUSTNESS PATTERNS
-# -----------------------------------------------------------------------------
-
-ROBUSTNESS_PATTERNS = [
-    # HTTP calls without timeout
-    DetectionPattern(
-        name="no_timeout",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''requests\.(?:get|post|put|patch|delete|head)\s*\([^)]*\)(?!.*timeout)''',
-        file_pattern="*.py",
-        explanation="HTTP request without timeout - can hang indefinitely if server doesn't respond.",
-        negative_pattern=r'''timeout\s*=''',
-    ),
-    DetectionPattern(
-        name="no_timeout",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''fetch\s*\([^)]+\)(?!.*signal|.*timeout|.*AbortController)''',
-        file_pattern="*.{js,ts,jsx,tsx}",
-        explanation="Fetch request without timeout/abort signal - can hang indefinitely.",
-    ),
-    DetectionPattern(
-        name="no_timeout",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''axios\.(?:get|post|put|patch|delete)\s*\([^)]*\)(?!.*timeout)''',
-        file_pattern="*.{js,ts,jsx,tsx}",
-        explanation="Axios request without timeout - can hang indefinitely.",
-        negative_pattern=r'''timeout\s*[:=]''',
-    ),
-    
-    # Silent error swallowing - empty except/catch blocks
-    DetectionPattern(
-        name="silent_error",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''except(?:\s+\w+)?:\s*\n\s*(?:pass|\.\.\.)\s*(?:\n|$)''',
-        file_pattern="*.py",
-        explanation="Empty except block silently swallows errors - at minimum, log the error.",
-    ),
-    DetectionPattern(
-        name="silent_error",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''catch\s*\([^)]*\)\s*\{\s*\}''',
-        file_pattern="*.{js,ts,jsx,tsx}",
-        explanation="Empty catch block silently swallows errors - at minimum, log the error.",
-    ),
-    
-    # Bare except (catches everything including KeyboardInterrupt)
-    DetectionPattern(
-        name="bare_except",
-        category="robustness",
-        severity=Severity.INFO,
-        pattern=r'''except\s*:\s*\n''',
-        file_pattern="*.py",
-        explanation="Bare 'except:' catches all exceptions including KeyboardInterrupt. Use 'except Exception:' instead.",
-    ),
-    
-    # No error handling on file operations - simplified pattern
-    # We just detect open() calls and flag them; false positives are acceptable
-    DetectionPattern(
-        name="unhandled_file_error",
-        category="robustness",
-        severity=Severity.INFO,
-        pattern=r'''^\s*(?:data|content|text|file_content)\s*=\s*open\s*\([^)]+\)\.read\(\)''',
-        file_pattern="*.py",
-        explanation="File read without 'with' context manager - use 'with open(...) as f:' for proper cleanup.",
-    ),
-
-    # --- GO-SPECIFIC ROBUSTNESS ---
-
-    # Go: HTTP requests using DefaultClient (no timeout)
-    DetectionPattern(
-        name="no_timeout",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''(?:http\.Get|http\.Post|http\.PostForm|http\.Head|http\.DefaultClient\.)''',
-        file_pattern="*.go",
-        explanation="Using default HTTP client without timeout in Go - create a custom http.Client with Timeout set.",
-    ),
-
-    # Go: Ignoring returned error values
-    DetectionPattern(
-        name="ignored_error",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''[a-zA-Z_]\w*\s*,\s*_\s*:?=\s*\w+''',
-        file_pattern="*.go",
-        explanation="Returned error value ignored in Go (val, _ := ...). Always check error return values.",
-    ),
-
-    # --- C#-SPECIFIC ROBUSTNESS ---
-
-    # C#: HttpClient without timeout
-    DetectionPattern(
-        name="no_timeout",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''new\s+HttpClient\s*\(\s*\)''',
-        file_pattern="*.cs",
-        explanation="HttpClient created without timeout configuration in C# - set HttpClient.Timeout or use IHttpClientFactory.",
-        negative_pattern=r'''Timeout\s*=''',
-    ),
-
-    # C#: Empty catch blocks
-    DetectionPattern(
-        name="silent_error",
-        category="robustness",
-        severity=Severity.WARNING,
-        pattern=r'''catch\s*(?:\([^)]*\))?\s*\{\s*\}''',
-        file_pattern="*.cs",
-        explanation="Empty catch block in C# silently swallows errors - at minimum, log the error.",
-    ),
-
-    # C#: Catching generic Exception without specifics
-    DetectionPattern(
-        name="generic_exception",
-        category="robustness",
-        severity=Severity.INFO,
-        pattern=r'''catch\s*\(\s*Exception\s+\w+\s*\)''',
-        file_pattern="*.cs",
-        explanation="Catching generic Exception in C# - catch specific exception types for better error handling.",
-    ),
-]
-
-# -----------------------------------------------------------------------------
 # HYGIENE PATTERNS
 # -----------------------------------------------------------------------------
 
 HYGIENE_PATTERNS = [
     # .env file committed (check tree, not content)
     # This is handled specially, not via regex
-    
-    # NOTE: Print statements are handled separately via _check_print_statements()
-    # to aggregate them instead of creating individual findings
     
     # Commented-out code blocks
     DetectionPattern(
@@ -393,7 +261,7 @@ class BadPracticesAnalyzer:
     """
     
     def __init__(self):
-        self.all_patterns = SECURITY_PATTERNS + ROBUSTNESS_PATTERNS + HYGIENE_PATTERNS
+        self.all_patterns = SECURITY_PATTERNS + HYGIENE_PATTERNS
     
     def analyze(self, repo_data: RepoData) -> BadPractices:
         """
@@ -415,21 +283,20 @@ class BadPracticesAnalyzer:
         # Check for special cases (not regex-based)
         findings.extend(self._check_env_committed(repo_data))
         findings.extend(self._check_gitignore_issues(repo_data))
-        findings.extend(self._check_print_statements(repo_data))
         findings.extend(self._check_todo_comments(repo_data))
-        
+
+        findings = self._compress_findings(findings)
+
         # Count by category
         security_count = sum(1 for f in findings if self._get_category(f.type) == "security")
-        robustness_count = sum(1 for f in findings if self._get_category(f.type) == "robustness")
         hygiene_count = sum(1 for f in findings if self._get_category(f.type) == "hygiene")
-        
+
         # Calculate score (higher = worse)
         score = self._calculate_score(findings)
-        
+
         return BadPractices(
             score=score,
             security_issues=security_count,
-            robustness_issues=robustness_count,
             hygiene_issues=hygiene_count,
             findings=findings,
         )
@@ -437,19 +304,16 @@ class BadPracticesAnalyzer:
     def _analyze_file(self, file_path: str, content: str) -> list[Finding]:
         """Analyze a single file for bad practices."""
         findings: list[Finding] = []
-        
-        # Skip test files for some checks
-        file_is_test = is_test_file(file_path)
-        
+
+        # Skip test files entirely
+        if is_test_file(file_path):
+            return findings
+
         for pattern in self.all_patterns:
             # Check if pattern applies to this file type
             if not self._file_matches_pattern(file_path, pattern.file_pattern):
                 continue
-            
-            # Skip hygiene checks in test files (print statements OK in tests)
-            if file_is_test and pattern.category == "hygiene":
-                continue
-            
+
             # Search for matches
             for match in re.finditer(pattern.pattern, content, re.MULTILINE | re.IGNORECASE):
                 # Check negative pattern (things that make this OK)
@@ -486,81 +350,6 @@ class BadPracticesAnalyzer:
                     snippet=snippet,
                     explanation=pattern.explanation,
                 ))
-        
-        return findings
-    
-    def _check_print_statements(self, repo_data: RepoData) -> list[Finding]:
-        """
-        Check for print/console.log statements and aggregate them.
-        
-        Instead of individual findings per print statement, creates one
-        aggregated finding with count and examples.
-        """
-        findings: list[Finding] = []
-        print_occurrences: list[str] = []  # "file:line" format
-        
-        for file_path, content in repo_data.files.items():
-            # Skip test files
-            if is_test_file(file_path):
-                continue
-            
-            lines = content.split('\n')
-            
-            # Python print statements
-            if file_path.endswith('.py'):
-                for i, line in enumerate(lines):
-                    stripped = line.strip()
-                    if stripped.startswith('#'):
-                        continue
-                    if re.match(r'^\s*print\s*\(', line):
-                        print_occurrences.append(f"{file_path}:{i+1}")
-            
-            # JavaScript/TypeScript console.log
-            elif file_path.endswith(('.js', '.ts', '.jsx', '.tsx')):
-                for i, line in enumerate(lines):
-                    stripped = line.strip()
-                    if stripped.startswith('//'):
-                        continue
-                    if 'console.log(' in line:
-                        print_occurrences.append(f"{file_path}:{i+1}")
-
-            # Go: fmt.Println/fmt.Printf (debug print statements)
-            elif file_path.endswith('.go'):
-                for i, line in enumerate(lines):
-                    stripped = line.strip()
-                    if stripped.startswith('//'):
-                        continue
-                    if re.search(r'fmt\.Print(?:ln|f)?\s*\(', line):
-                        print_occurrences.append(f"{file_path}:{i+1}")
-
-            # C#: Console.WriteLine (debug print statements)
-            elif file_path.endswith('.cs'):
-                for i, line in enumerate(lines):
-                    stripped = line.strip()
-                    if stripped.startswith('//'):
-                        continue
-                    if 'Console.Write' in line:
-                        print_occurrences.append(f"{file_path}:{i+1}")
-        
-        # Only create finding if there are print statements
-        if len(print_occurrences) >= 3:  # Threshold: 3+ to flag
-            # Parse first occurrence for file and line
-            first_file, first_line = print_occurrences[0].rsplit(':', 1)
-            
-            # Take first 3 examples for snippet
-            examples = print_occurrences[:3]
-            examples_str = ', '.join(examples)
-            if len(print_occurrences) > 3:
-                examples_str += f" ... and {len(print_occurrences) - 3} more"
-            
-            findings.append(Finding(
-                type="print_statements",
-                severity=Severity.INFO,
-                file=f"Multiple files, first occurrence at {first_file}",
-                line=int(first_line),
-                snippet=examples_str,
-                explanation=f"Found {len(print_occurrences)} print/console.log statements across the codebase. Consider using proper logging for production.",
-            ))
         
         return findings
     
@@ -605,6 +394,48 @@ class BadPracticesAnalyzer:
             ))
 
         return findings
+
+    def _compress_findings(self, findings: list[Finding]) -> list[Finding]:
+        """
+        Compress findings of the same type into a single aggregated Finding.
+
+        Types with count == 1 pass through unchanged.
+        Already-aggregated types (print_statements, todo_comment) will be
+        count=1 in their group since their dedicated methods already aggregate,
+        so they pass through without double-compression.
+        """
+        severity_rank = {Severity.CRITICAL: 2, Severity.WARNING: 1, Severity.INFO: 0}
+
+        grouped: dict[str, list[Finding]] = {}
+        for f in findings:
+            grouped.setdefault(f.type, []).append(f)
+
+        result: list[Finding] = []
+        for ftype, group in grouped.items():
+            if len(group) == 1:
+                result.append(group[0])
+                continue
+
+            count = len(group)
+            first = group[0]
+            highest_severity = max(group, key=lambda f: severity_rank[f.severity]).severity
+
+            locations = [f"{f.file}:{f.line}" for f in group]
+            shown = locations[:5]
+            snippet = ', '.join(shown)
+            if count > 5:
+                snippet += f" ... and {count - 5} more"
+
+            result.append(Finding(
+                type=ftype,
+                severity=highest_severity,
+                file=f"Multiple files, first occurrence at {first.file}",
+                line=first.line,
+                snippet=snippet,
+                explanation=f"{first.explanation} (found {count} occurrences)",
+            ))
+
+        return result
 
     def _check_env_committed(self, repo_data: RepoData) -> list[Finding]:
         """Check if .env file is committed (appears in tree)."""
@@ -686,17 +517,12 @@ class BadPracticesAnalyzer:
         for pattern in SECURITY_PATTERNS:
             if pattern.name == finding_type:
                 return "security"
-        for pattern in ROBUSTNESS_PATTERNS:
-            if pattern.name == finding_type:
-                return "robustness"
         for pattern in HYGIENE_PATTERNS:
             if pattern.name == finding_type:
                 return "hygiene"
         # Special cases
-        if finding_type in ("env_committed", "no_gitignore", "print_statements", "todo_comment"):
+        if finding_type in ("env_committed", "no_gitignore", "todo_comment"):
             return "hygiene"
-        if finding_type in ("ignored_error", "generic_exception"):
-            return "robustness"
         if finding_type == "command_injection":
             return "security"
         return "hygiene"  # Default

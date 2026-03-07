@@ -132,9 +132,102 @@ EXPERIENCE
         mock_response.status_code = 404
         mock_response.text = "Not Found"
         mock_get.return_value = mock_response
-        
+
         with self.assertRaises(ResumeParseException):
             ResolveRepo("https://github.com/nonexistent", [])
+
+    @patch('requests.post')
+    @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})
+    def test_resolve_repo_pinned_match(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": {
+                "user": {
+                    "pinnedItems": {
+                        "nodes": [
+                            {"name": "awesome-web-app", "url": "https://github.com/johndoe/awesome-web-app"},
+                            {"name": "other-pinned", "url": "https://github.com/johndoe/other-pinned"},
+                        ]
+                    }
+                }
+            }
+        }
+        mock_post.return_value = mock_response
+
+        resolved = ResolveRepo("https://github.com/johndoe", ["Awesome Web App"])
+        self.assertEqual(resolved, "https://github.com/johndoe/awesome-web-app")
+        # Should NOT have called REST API
+        mock_post.assert_called_once()
+
+    @patch('requests.post')
+    @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})
+    def test_resolve_repo_pinned_no_projects(self, mock_post):
+        """Empty project_names + pinned repos → return first pinned repo."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": {
+                "user": {
+                    "pinnedItems": {
+                        "nodes": [
+                            {"name": "pinned-showcase", "url": "https://github.com/johndoe/pinned-showcase"},
+                        ]
+                    }
+                }
+            }
+        }
+        mock_post.return_value = mock_response
+
+        resolved = ResolveRepo("https://github.com/johndoe", [])
+        self.assertEqual(resolved, "https://github.com/johndoe/pinned-showcase")
+
+    @patch('requests.get')
+    @patch('requests.post')
+    @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})
+    def test_resolve_repo_pinned_no_match_falls_through(self, mock_post, mock_get):
+        """Pinned repos exist but no name matches → fall through to REST API."""
+        mock_post_resp = MagicMock()
+        mock_post_resp.status_code = 200
+        mock_post_resp.json.return_value = {
+            "data": {
+                "user": {
+                    "pinnedItems": {
+                        "nodes": [
+                            {"name": "unrelated-repo", "url": "https://github.com/johndoe/unrelated-repo"},
+                        ]
+                    }
+                }
+            }
+        }
+        mock_post.return_value = mock_post_resp
+
+        mock_get_resp = MagicMock()
+        mock_get_resp.status_code = 200
+        mock_get_resp.json.return_value = [
+            {"name": "matching-rest-repo", "pushed_at": "2023-01-01T00:00:00Z"},
+        ]
+        mock_get.return_value = mock_get_resp
+
+        resolved = ResolveRepo("https://github.com/johndoe", ["Matching Rest Repo"])
+        self.assertEqual(resolved, "https://github.com/johndoe/matching-rest-repo")
+
+    @patch('requests.get')
+    def test_resolve_repo_no_token_skips_graphql(self, mock_get):
+        """No GITHUB_TOKEN → skip GraphQL, use REST as before."""
+        mock_get_resp = MagicMock()
+        mock_get_resp.status_code = 200
+        mock_get_resp.json.return_value = [
+            {"name": "most-recent-repo", "pushed_at": "2023-01-01T00:00:00Z"},
+        ]
+        mock_get.return_value = mock_get_resp
+
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("GITHUB_TOKEN", None)
+            resolved = ResolveRepo("https://github.com/johndoe", [])
+
+        self.assertEqual(resolved, "https://github.com/johndoe/most-recent-repo")
+        mock_get.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()

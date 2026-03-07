@@ -2,6 +2,35 @@ import os
 import requests
 from .resume_parser import ResumeParseException
 
+def _fetch_pinned_repos(username: str, headers: dict) -> list[dict]:
+    """Fetches pinned repos via GitHub GraphQL API. Returns list of {name, url} or empty list on any failure."""
+    token = headers.get("Authorization")
+    if not token:
+        return []
+
+    query = """
+    query($username: String!) {
+      user(login: $username) {
+        pinnedItems(first: 6, types: REPOSITORY) {
+          nodes { ... on Repository { name url } }
+        }
+      }
+    }
+    """
+    try:
+        response = requests.post(
+            "https://api.github.com/graphql",
+            json={"query": query, "variables": {"username": username}},
+            headers=headers,
+        )
+        if response.status_code != 200:
+            return []
+        data = response.json()
+        nodes = data.get("data", {}).get("user", {}).get("pinnedItems", {}).get("nodes", [])
+        return [{"name": n["name"], "url": n["url"]} for n in nodes if n]
+    except Exception:
+        return []
+
 def ResolveRepo(github_profile_url: str, project_names: list[str]) -> str:
     """
     Resolves a GitHub profile URL and a list of project names to the best-matching repository URL.
@@ -17,51 +46,62 @@ def ResolveRepo(github_profile_url: str, project_names: list[str]) -> str:
     
     username = parts[-1]
     
-    # 2. Call GitHub API: GET https://api.github.com/users/{username}/repos?sort=pushed&per_page=100
+    # 2. Build headers and fetch pinned repos
     github_token = os.getenv("GITHUB_TOKEN")
     headers = {}
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
-    
+
+    pinned_repos = _fetch_pinned_repos(username, headers)
+
+    # 3. If pinned repos exist and project_names provided, try matching pinned repos first
+    if pinned_repos and project_names:
+        for repo in pinned_repos:
+            repo_name = repo["name"]
+            processed_repo_name = repo_name.replace('-', ' ').replace('_', ' ').lower()
+            for proj in project_names:
+                proj_lower = proj.lower()
+                if processed_repo_name and proj_lower and (processed_repo_name in proj_lower or proj_lower in processed_repo_name):
+                    return f"https://github.com/{username}/{repo_name}"
+
+    # 4. If pinned repos exist and no project_names, return first pinned repo
+    if pinned_repos and not project_names:
+        return f"https://github.com/{username}/{pinned_repos[0]['name']}"
+
+    # 5. Fall through to REST API logic (existing behavior)
     api_url = f"https://api.github.com/users/{username}/repos?sort=pushed&per_page=100"
-    
+
     try:
         response = requests.get(api_url, headers=headers)
     except Exception as e:
         raise ResumeParseException(f"GitHub API request failed: {e}")
-    
-    # 3. If API call fails or returns non-200: raise ResumeParseException
+
     if response.status_code != 200:
         raise ResumeParseException(f"GitHub API error: {response.status_code} - {response.text}")
-    
+
     repos = response.json()
-    
-    # 4. If response returns 0 public repos: raise ResumeParseException
+
     if not repos:
         raise ResumeParseException("No public repositories found for this user.")
-    
-    # 5. Matching logic (only if project_names is non-empty)
+
     best_repo = None
     if project_names:
         for repo in repos:
             repo_name = repo["name"]
-            # repo name (hyphens/underscores → spaces, lowercased)
             processed_repo_name = repo_name.replace('-', ' ').replace('_', ' ').lower()
-            
+
             match_found = False
             for proj in project_names:
                 proj_lower = proj.lower()
                 if processed_repo_name and proj_lower and (processed_repo_name in proj_lower or proj_lower in processed_repo_name):
                     match_found = True
                     break
-            
+
             if match_found:
                 best_repo = repo
                 break
 
-    # 6. Fallback (if project_names is empty or all scores = 0)
     if not best_repo:
-        best_repo = repos[0] # most recently pushed
-        
-    # 7. Return "https://github.com/{username}/{repo_name}"
+        best_repo = repos[0]  # most recently pushed
+
     return f"https://github.com/{username}/{best_repo['name']}"

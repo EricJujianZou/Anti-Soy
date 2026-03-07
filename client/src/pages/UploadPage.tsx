@@ -15,6 +15,7 @@ const UploadPage = () => {
   const [priorities, setPriorities] = useState<Set<PriorityKey>>(
     new Set(PRIORITY_OPTIONS.map((o) => o.key))
   );
+  const [useGenericQuestions, setUseGenericQuestions] = useState(false);
 
   useEffect(() => {
     const prioritiesParam = searchParams.get("priorities");
@@ -158,6 +159,19 @@ const UploadPage = () => {
                   </label>
                 ))}
               </div>
+              <div className="mt-4 pt-4 border-t border-border/30">
+                <label className="flex items-center gap-2 cursor-pointer select-none group w-fit mx-auto">
+                  <Checkbox
+                    checked={useGenericQuestions}
+                    onCheckedChange={(checked) => setUseGenericQuestions(checked === true)}
+                    disabled={isUploading}
+                    className="border-primary/60 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                  />
+                  <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
+                    Use same interview questions for all candidates
+                  </span>
+                </label>
+              </div>
             </div>
 
             <div className="mt-8">
@@ -206,7 +220,7 @@ const UploadPage = () => {
 
             <div className="mt-8 flex justify-center">
               <button
-                onClick={() => handleUpload(Array.from(priorities))}
+                onClick={() => handleUpload(Array.from(priorities), useGenericQuestions)}
                 disabled={files.length === 0 || isUploading}
                 className={cn(
                   "w-full sm:w-2/3 border border-primary bg-primary/10 text-primary py-3 px-8",

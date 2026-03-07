@@ -8,12 +8,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from models import Repo, RepoAnalysis, RepoEvaluation, User
-from v2.data_extractor import extract_repo_data
+from v2.data_extractor import extract_repo_data, is_test_file
 from v2.feature_extractor import extract_features
 from v2.analyzers import analyze_ai_slop, analyze_bad_practices, analyze_code_quality
 from v2.schemas import Verdict, VALID_PRIORITIES, DEFAULT_PRIORITIES
 from v2.clone_script import clone_repo
-from prompt_modules import build_evaluation_prompt, build_questions_prompt
+from prompt_modules import build_evaluation_prompt, build_questions_prompt, HARDCODED_INTERVIEW_QUESTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -95,18 +95,26 @@ def compute_verdict(ai_score: int, bad_practices_score: int, quality_score: int)
 
 def _build_findings_context(bad_practices_result, code_quality_result):
     findings_context = []
-    for finding in bad_practices_result.findings[:5]:
+    for finding in bad_practices_result.findings:
+        if is_test_file(finding.file):
+            continue
         findings_context.append({
             "category": "Bad Practice", "type": finding.type, "severity": finding.severity,
             "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
             "explanation": finding.explanation,
         })
-    for finding in code_quality_result.findings[:5]:
+        if len(findings_context) >= 5:
+            break
+    for finding in code_quality_result.findings:
+        if is_test_file(finding.file):
+            continue
         findings_context.append({
             "category": "Code Quality", "type": finding.type, "severity": finding.severity,
             "file": finding.file, "line": finding.line, "snippet": finding.snippet[:300],
             "explanation": finding.explanation,
         })
+        if len(findings_context) >= 10:
+            break
     return findings_context
 
 def run_analysis_pipeline(repo_url: str):
@@ -130,34 +138,48 @@ def run_analysis_pipeline(repo_url: str):
 
 def save_analysis_results(session: Session, repo_id: int, extracted_data, ai_slop, bad_practices, code_quality, verdict):
     """
-    Saves analysis results to the database.
+    Saves analysis results to the database. Updates existing record if one already exists.
     """
     files_analyzed = [
         {"path": path, "importance_score": min(max(score, 0), 100), "loc": len(extracted_data.files.get(path, "").split("\n"))}
         for path, score in sorted(extracted_data.file_importance.items(), key=lambda x: x[1], reverse=True)[:15]
     ]
-    
-    repo_analysis = RepoAnalysis(
-        repo_id=repo_id,
-        analyzed_at=datetime.utcnow(),
-        verdict_type=verdict.type,
-        verdict_confidence=verdict.confidence,
-        ai_slop_score=ai_slop.score,
-        ai_slop_confidence=ai_slop.confidence.value,
-        ai_slop_data=ai_slop.model_dump_json(),
-        bad_practices_score=bad_practices.score,
-        bad_practices_data=bad_practices.model_dump_json(),
-        code_quality_score=code_quality.score,
-        code_quality_data=code_quality.model_dump_json(),
-        files_analyzed=json.dumps(files_analyzed),
-    )
-    session.add(repo_analysis)
-    
+
+    repo_analysis = session.query(RepoAnalysis).filter(RepoAnalysis.repo_id == repo_id).first()
+    if repo_analysis:
+        repo_analysis.analyzed_at = datetime.utcnow()
+        repo_analysis.verdict_type = verdict.type
+        repo_analysis.verdict_confidence = verdict.confidence
+        repo_analysis.ai_slop_score = ai_slop.score
+        repo_analysis.ai_slop_confidence = ai_slop.confidence.value
+        repo_analysis.ai_slop_data = ai_slop.model_dump_json()
+        repo_analysis.bad_practices_score = bad_practices.score
+        repo_analysis.bad_practices_data = bad_practices.model_dump_json()
+        repo_analysis.code_quality_score = code_quality.score
+        repo_analysis.code_quality_data = code_quality.model_dump_json()
+        repo_analysis.files_analyzed = json.dumps(files_analyzed)
+    else:
+        repo_analysis = RepoAnalysis(
+            repo_id=repo_id,
+            analyzed_at=datetime.utcnow(),
+            verdict_type=verdict.type,
+            verdict_confidence=verdict.confidence,
+            ai_slop_score=ai_slop.score,
+            ai_slop_confidence=ai_slop.confidence.value,
+            ai_slop_data=ai_slop.model_dump_json(),
+            bad_practices_score=bad_practices.score,
+            bad_practices_data=bad_practices.model_dump_json(),
+            code_quality_score=code_quality.score,
+            code_quality_data=code_quality.model_dump_json(),
+            files_analyzed=json.dumps(files_analyzed),
+        )
+        session.add(repo_analysis)
+
     # Update repo languages
     repo = session.query(Repo).filter(Repo.id == repo_id).first()
     if repo and extracted_data.languages:
         repo.languages = json.dumps(extracted_data.languages)
-    
+
     session.flush()
     return repo_analysis
 
@@ -168,7 +190,8 @@ def run_evaluation_pipeline(
     bad_practices,
     code_quality,
     extracted_data,
-    priorities: list[str] = None
+    priorities: list[str] = None,
+    use_generic_questions: bool = False,
 ):
     """
     Runs Gemini evaluation and returns (business_value, standout_features, is_rejected, rejection_reason, interview_questions)
@@ -217,12 +240,15 @@ def run_evaluation_pipeline(
         rejection_reason = "AI-generated code and nothing stands out"
         
     # 2. Interview Questions
+    if use_generic_questions:
+        return business_value, standout_features, is_rejected, rejection_reason, HARDCODED_INTERVIEW_QUESTIONS
+
     questions_prompt = build_questions_prompt(
         repo_url=repo_url, repo_name=repo_name,
         ai_slop_result=ai_slop, bad_practices_result=bad_practices, code_quality_result=code_quality,
         file_tree=file_tree, findings_context=findings_context, priorities=priorities
     )
-    
+
     questions_list = []
     for attempt in range(2):
         try:
@@ -235,7 +261,7 @@ def run_evaluation_pipeline(
             break
         except Exception as e:
             logger.warning(f"Gemini questions error (attempt {attempt + 1}/2): {e}")
-            
+
     return business_value, standout_features, is_rejected, rejection_reason, questions_list
 
 def save_evaluation_results(
@@ -250,15 +276,24 @@ def save_evaluation_results(
     """
     Saves evaluation results to the database.
     """
-    repo_evaluation = RepoEvaluation(
-        repo_id=repo_id,
-        evaluated_at=datetime.utcnow(),
-        is_rejected=1 if is_rejected else 0,
-        rejection_reason=rejection_reason,
-        business_value=json.dumps(business_value) if business_value else json.dumps({}),
-        standout_features=json.dumps(standout_features),
-        interview_questions=json.dumps(interview_questions),
-    )
-    session.add(repo_evaluation)
+    repo_evaluation = session.query(RepoEvaluation).filter(RepoEvaluation.repo_id == repo_id).first()
+    if repo_evaluation:
+        repo_evaluation.evaluated_at = datetime.utcnow()
+        repo_evaluation.is_rejected = 1 if is_rejected else 0
+        repo_evaluation.rejection_reason = rejection_reason
+        repo_evaluation.business_value = json.dumps(business_value) if business_value else json.dumps({})
+        repo_evaluation.standout_features = json.dumps(standout_features)
+        repo_evaluation.interview_questions = json.dumps(interview_questions)
+    else:
+        repo_evaluation = RepoEvaluation(
+            repo_id=repo_id,
+            evaluated_at=datetime.utcnow(),
+            is_rejected=1 if is_rejected else 0,
+            rejection_reason=rejection_reason,
+            business_value=json.dumps(business_value) if business_value else json.dumps({}),
+            standout_features=json.dumps(standout_features),
+            interview_questions=json.dumps(interview_questions),
+        )
+        session.add(repo_evaluation)
     session.flush()
     return repo_evaluation

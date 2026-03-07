@@ -308,7 +308,8 @@ async def upload_batch(
     request: Request,
     background_tasks: BackgroundTasks,
     resumes: list[UploadFile] = File(...),
-    priorities: str = Form(None) # Passed as comma-separated string or JSON
+    priorities: str = Form(None), # Passed as comma-separated string or JSON
+    use_generic_questions: str = Form(None),
 ):
     """
     Upload a batch of resumes for background processing.
@@ -338,16 +339,19 @@ async def upload_batch(
     if not priority_list:
         priority_list = DEFAULT_PRIORITIES
 
+    generic_questions_flag = 1 if use_generic_questions and use_generic_questions.lower() == "true" else 0
+
     import uuid
     batch_id = str(uuid.uuid4())
-    
+
     with Session(engine) as session:
         # 3. Create BatchJob
         batch_job = BatchJob(
-            id=batch_id, 
-            total_items=len(resumes), 
+            id=batch_id,
+            total_items=len(resumes),
             status="pending",
-            priorities=json.dumps(priority_list)
+            priorities=json.dumps(priority_list),
+            use_generic_questions=generic_questions_flag,
         )
         session.add(batch_job)
         
@@ -367,7 +371,7 @@ async def upload_batch(
         session.commit()
         
         # 5. Kick off background task
-        background_tasks.add_task(process_batch, batch_id, priority_list)
+        background_tasks.add_task(process_batch, batch_id, priority_list, bool(generic_questions_flag))
         
         return BatchUploadResponse(batch_id=batch_id)
 
@@ -392,7 +396,8 @@ def get_batch_status(request: Request, batch_id: str):
         for item in batch_job.items:
             verdict = None
             standout_features = []
-            
+            overall_score = None
+
             if item.status == "completed" and item.repo:
                 if item.repo.repo_analysis:
                     verdict = Verdict(
@@ -401,19 +406,36 @@ def get_batch_status(request: Request, batch_id: str):
                     )
                 if item.repo.repo_evaluation:
                     standout_features = json.loads(item.repo.repo_evaluation.standout_features)
-            
+
+                # Compute overall score (0-100)
+                if item.repo.repo_analysis and item.repo.repo_evaluation:
+                    score = 0
+                    # solves_real_problem: 35 points
+                    bv = json.loads(item.repo.repo_evaluation.business_value)
+                    if bv.get("solves_real_problem", False):
+                        score += 35
+                    # code_quality: 0-25 points
+                    score += round(item.repo.repo_analysis.code_quality_score / 100 * 25)
+                    # standout_features: 20 points if non-empty
+                    if standout_features:
+                        score += 20
+                    # AI bonus: 20 points if ai_slop_score < 50
+                    if item.repo.repo_analysis.ai_slop_score < 50:
+                        score += 20
+                    overall_score = score
+
             item_statuses.append(BatchItemStatus(
                 id=item.id,
                 position=item.position,
                 filename=item.filename,
                 candidate_name=item.candidate_name or "Unknown",
-                candidate_university=item.candidate_university,
                 repo_url=item.repo_url,
                 status=item.status,
                 error_message=item.error_message,
                 repo_id=item.repo_id,
                 verdict=verdict,
-                standout_features=standout_features
+                standout_features=standout_features,
+                overall_score=overall_score,
             ))
             
         return BatchStatusResponse(
@@ -437,7 +459,7 @@ async def startup_event():
         for job in unfinished_jobs:
             logger.info(f"Resuming batch job {job.id} on startup")
             priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
-            asyncio.create_task(process_batch(job.id, priorities))
+            asyncio.create_task(process_batch(job.id, priorities, bool(job.use_generic_questions)))
 
 
 @app.post("/analyze-stream")

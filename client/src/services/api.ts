@@ -74,7 +74,6 @@ export interface AISlop {
 export interface BadPractices {
   score: number;
   security_issues: number;
-  robustness_issues: number;
   hygiene_issues: number;
   findings: Finding[];
 }
@@ -82,10 +81,7 @@ export interface BadPractices {
 export interface CodeQuality {
   score: number;
   files_organized: number;
-  test_coverage: number;
   readme_quality: number;
-  error_handling: number;
-  logging_quality: number;
   dependency_health: number;
   findings: Finding[];
 }

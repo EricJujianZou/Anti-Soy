@@ -20,23 +20,24 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
 engine = create_engine(f"sqlite:///{DATABASE_PATH}")
 
-async def process_batch(batch_id: str, priorities: list[str] = None):
+async def process_batch(batch_id: str, priorities: list[str] = None, use_generic_questions: bool = False):
     """
     Background task to process a batch of resumes.
     """
     logger.info(f"Starting batch processing for {batch_id}")
-    
+
     with Session(engine) as session:
         batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
         if not batch_job:
             logger.error(f"Batch job {batch_id} not found")
             return
-            
+
+        use_generic_questions = bool(batch_job.use_generic_questions)
         batch_job.status = "running"
         session.commit()
-        
+
         # Process items concurrently
-        tasks = [process_single_item(item.id, priorities) for item in batch_job.items if item.status in ["pending", "running"]]
+        tasks = [process_single_item(item.id, priorities, use_generic_questions) for item in batch_job.items if item.status in ["pending", "running"]]
         await asyncio.gather(*tasks)
         
         # Reload to check status
@@ -45,7 +46,7 @@ async def process_batch(batch_id: str, priorities: list[str] = None):
         session.commit()
         logger.info(f"Completed batch processing for {batch_id}")
 
-async def process_single_item(item_id: int, priorities: list[str] = None):
+async def process_single_item(item_id: int, priorities: list[str] = None, use_generic_questions: bool = False):
     """
     Processes a single resume item.
     """
@@ -73,7 +74,6 @@ async def process_single_item(item_id: int, priorities: list[str] = None):
                 
                 # 5. Update item fields
                 item.candidate_name = candidate_info.name
-                item.candidate_university = candidate_info.university
                 item.github_profile_url = candidate_info.github_profile_url
                 session.commit()
                 
@@ -121,7 +121,8 @@ async def process_single_item(item_id: int, priorities: list[str] = None):
                 
                 # Run Evaluation
                 bv, sf, ir, rr, iq = run_evaluation_pipeline(
-                    repo_url, repo_name, ai_slop, bad_practices, code_quality, extracted_data, priorities
+                    repo_url, repo_name, ai_slop, bad_practices, code_quality, extracted_data, priorities,
+                    use_generic_questions=use_generic_questions,
                 )
                 save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq)
                 
