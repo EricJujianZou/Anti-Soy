@@ -209,18 +209,88 @@ export const api = {
 };
 
 
+// =============================================================================
+// COMPATIBILITY TYPES (DUO SCAN)
+// =============================================================================
+
+export interface CompatibilityCallout {
+  type: "strength" | "flag";
+  message: string;
+}
+
+export interface CompatibilityResponse {
+  score: number;
+  score_label: string;
+  narrative: string;
+  callouts: CompatibilityCallout[];
+}
+
+export async function fetchCompatibility(
+  analysisA: AnalysisResponse,
+  evaluationA: EvaluationEvent | null,
+  analysisB: AnalysisResponse,
+  evaluationB: EvaluationEvent | null,
+  hackathonContext?: string,
+): Promise<CompatibilityResponse> {
+  const res = await fetch(`${API_BASE_URL}/compatibility`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      analysis_a: analysisA,
+      evaluation_a: evaluationA
+        ? {
+            business_value: evaluationA.business_value,
+            standout_features: evaluationA.standout_features,
+            is_rejected: evaluationA.is_rejected,
+          }
+        : null,
+      analysis_b: analysisB,
+      evaluation_b: evaluationB
+        ? {
+            business_value: evaluationB.business_value,
+            standout_features: evaluationB.standout_features,
+            is_rejected: evaluationB.is_rejected,
+          }
+        : null,
+      hackathon_context: hackathonContext || null,
+    }),
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to compute compatibility" }));
+    throw new Error(error.detail);
+  }
+  return res.json();
+}
+
+
 /**
  * SSE streaming endpoint — progressive analysis.
  * Uses fetch + ReadableStream (can't use EventSource with POST).
  */
+export async function resolveUsername(username: string): Promise<string> {
+  const res = await fetch(`${API_BASE_URL}/resolve-username?username=${encodeURIComponent(username)}`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to resolve username" }));
+    throw new Error(error.detail);
+  }
+  const data = await res.json();
+  return data.repo_url;
+}
+
 export async function analyzeRepoStream(
   repo_url: string,
   priorities: string[] | undefined,
   callbacks: StreamCallbacks,
+  options?: { skipQuestions?: boolean },
 ): Promise<void> {
   const body: Record<string, unknown> = { repo_url };
   if (priorities && priorities.length > 0) {
     body.priorities = priorities;
+  }
+  if (options?.skipQuestions) {
+    body.skip_questions = true;
   }
   const res = await fetch(`${API_BASE_URL}/analyze-stream`, {
     method: "POST",

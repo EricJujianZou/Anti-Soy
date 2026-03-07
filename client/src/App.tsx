@@ -13,6 +13,7 @@ import { usePageTracking } from "./hooks/usePageTracking";
 
 const UploadPage = React.lazy(() => import("./pages/UploadPage"));
 const BatchDashboard = React.lazy(() => import("./pages/BatchDashboard"));
+const DuoScanPage = React.lazy(() => import("./pages/DuoScanPage"));
 
 const queryClient = new QueryClient();
 
@@ -30,6 +31,7 @@ const AppContent = () => {
         <Route path="/repo/:repoId" element={<RepoAnalysis />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/dashboard/:batchId" element={<BatchDashboard />} />
+        <Route path="/duo" element={<DuoScanPage />} />
         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
         <Route path="*" element={<NotFound />} />
       </Routes>

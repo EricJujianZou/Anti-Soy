@@ -30,7 +30,7 @@ export function useAnalyzeStream() {
   const [state, setState] = useState<StreamState>(initialState);
   const streamingRef = useRef(false);
 
-  const startStream = useCallback((repoUrl: string, priorities?: string[]) => {
+  const startStream = useCallback((repoUrl: string, priorities?: string[], options?: { skipQuestions?: boolean }) => {
     if (streamingRef.current) return;
     streamingRef.current = true;
 
@@ -67,7 +67,7 @@ export function useAnalyzeStream() {
         setState((prev) => ({ ...prev, isStreaming: false, error: message }));
         streamingRef.current = false;
       },
-    }).catch((err) => {
+    }, options).catch((err) => {
       const errorMsg = err instanceof Error ? err.message : "Connection failed";
       gtag("event", "analysis_failed", {
         event_category: "engagement",

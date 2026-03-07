@@ -50,10 +50,14 @@ from v2.schemas import (
     BatchStatusResponse,
     BatchItemStatus,
     BatchUploadResponse,
+    CompatibilityRequest,
+    CompatibilityResponse,
+    CompatibilityCallout,
     VALID_PRIORITIES,
     DEFAULT_PRIORITIES,
 )
-from prompt_modules import build_evaluation_prompt, build_questions_prompt
+from prompt_modules import build_evaluation_prompt, build_questions_prompt, build_compatibility_prompt
+from v2.compatibility_scorer import compute_compatibility
 from v2.batch_processor import process_batch
 from v2.analysis_service import (
     compute_verdict, 
@@ -609,6 +613,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                     ai_slop_result, bad_practices_result, code_quality_result,
                     extracted_data,
                     priorities=priorities,
+                    skip_questions=body.skip_questions,
                 )
 
                 yield f"event: evaluation\ndata: {json.dumps({'business_value': bv, 'standout_features': sf, 'is_rejected': ir, 'rejection_reason': rr})}\n\n"
@@ -640,3 +645,89 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
     )
 
 
+@app.post("/compatibility", response_model=CompatibilityResponse)
+@limiter.limit("10/minute")
+def check_compatibility(request: Request, body: CompatibilityRequest):
+    """
+    Compute compatibility between two scan results.
+    Accepts pre-computed analysis + evaluation dicts from the frontend.
+    Returns rule-based score + LLM narrative.
+    """
+    score, score_label, callouts = compute_compatibility(
+        body.analysis_a, body.evaluation_a,
+        body.analysis_b, body.evaluation_b,
+    )
+
+    # LLM narrative (graceful fallback)
+    narrative = ""
+    try:
+        system_prompt, user_prompt = build_compatibility_prompt(
+            body.analysis_a, body.evaluation_a,
+            body.analysis_b, body.evaluation_b,
+            score, score_label, callouts,
+            body.hackathon_context,
+        )
+
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        if gemini_api_key:
+            from google import genai
+            client = genai.Client(api_key=gemini_api_key)
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[
+                    {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]},
+                ],
+                config={"http_options": {"timeout": 30_000}, "temperature": 0.3},
+            )
+            narrative = response.text.strip()
+    except Exception as e:
+        logger.warning(f"Compatibility narrative LLM call failed: {e}")
+        # Fallback to template
+        narrative = f"{score_label}. These two developers bring different strengths to the table."
+
+    return CompatibilityResponse(
+        score=score,
+        score_label=score_label,
+        narrative=narrative,
+        callouts=[CompatibilityCallout(type=c["type"], message=c["message"]) for c in callouts],
+    )
+
+
+@app.get("/resolve-username")
+@limiter.limit("20/minute")
+def resolve_username(request: Request, username: str):
+    """
+    Resolves a GitHub username to their best repository URL.
+    Uses pinned repos (GraphQL) first, falls back to most recently pushed repo (REST).
+    """
+    from v2.github_resolver import _fetch_pinned_repos
+    import os
+
+    if not username or "/" in username:
+        raise HTTPException(status_code=400, detail="Invalid username")
+
+    github_token = os.getenv("GITHUB_TOKEN")
+    headers = {}
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    # Try pinned repos first
+    pinned = _fetch_pinned_repos(username, headers)
+    if pinned:
+        return {"repo_url": pinned[0]["url"]}
+
+    # Fallback to most recently pushed repo
+    import requests as http_requests
+    try:
+        resp = http_requests.get(
+            f"https://api.github.com/users/{username}/repos?sort=pushed&per_page=1",
+            headers=headers,
+        )
+        if resp.status_code == 200:
+            repos = resp.json()
+            if repos:
+                return {"repo_url": repos[0]["html_url"]}
+    except Exception as e:
+        logger.warning(f"GitHub REST fallback failed for {username}: {e}")
+
+    raise HTTPException(status_code=404, detail=f"No repositories found for user '{username}'")
