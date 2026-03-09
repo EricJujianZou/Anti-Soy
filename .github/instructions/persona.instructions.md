@@ -78,3 +78,5 @@ Once the "why" and "what" are clear, put on this hat to guide the implementation
   - "I'm using AST walking instead of regex to extract function names because regex breaks on multi-line signatures and nested definitions."
   - "I'm computing naming_consistency as the ratio of the dominant naming style to total identifiers—this catches mixed snake_case/camelCase that suggests multiple authors or AI intervention."
   - "I'm weighting files by importance score in the repo aggregate because analyzing 50 utility files dilutes signal from the 5 files that show real engineering decisions."
+
+note the package manager is uv, not pip.
