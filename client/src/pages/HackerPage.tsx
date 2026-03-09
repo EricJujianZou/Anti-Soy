@@ -17,8 +17,15 @@ const DUO_EXAMPLES = [
   },
 ];
 
-const isValidGithubUrl = (url: string) =>
-  url.trim() !== "" && url.includes("github.com");
+const isValidGithubInput = (url: string) => {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  // Full GitHub URL
+  if (trimmed.includes("github.com")) return true;
+  // Plain GitHub username (no slashes, alphanumeric + hyphens)
+  if (!trimmed.includes("/") && /^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(trimmed)) return true;
+  return false;
+};
 
 const HackerPage = () => {
   const navigate = useNavigate();
@@ -29,8 +36,8 @@ const HackerPage = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const hasA = isValidGithubUrl(urlA);
-    const hasB = isValidGithubUrl(urlB);
+    const hasA = isValidGithubInput(urlA);
+    const hasB = isValidGithubInput(urlB);
 
     if (hasA && hasB) {
       // Duo scan
@@ -62,9 +69,9 @@ const HackerPage = () => {
   };
 
   const hasAnyInput = urlA.trim() !== "" || urlB.trim() !== "";
-  const hasBothValid = isValidGithubUrl(urlA) && isValidGithubUrl(urlB);
+  const hasBothValid = isValidGithubInput(urlA) && isValidGithubInput(urlB);
   const hasSingleValid =
-    !hasBothValid && (isValidGithubUrl(urlA) || isValidGithubUrl(urlB));
+    !hasBothValid && (isValidGithubInput(urlA) || isValidGithubInput(urlB));
 
   return (
     <GridBackground>
@@ -141,7 +148,7 @@ const HackerPage = () => {
                         onChange={(e) => setUrlA(e.target.value)}
                         onFocus={() => setFocusedInput("a")}
                         onBlur={() => setFocusedInput(null)}
-                        placeholder="https://github.com/teammate-a/repo"
+                        placeholder="github.com/teammate-a/repo or username"
                         className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground/50 font-mono text-sm"
                       />
                       {focusedInput === "a" && (
@@ -184,7 +191,7 @@ const HackerPage = () => {
                         onChange={(e) => setUrlB(e.target.value)}
                         onFocus={() => setFocusedInput("b")}
                         onBlur={() => setFocusedInput(null)}
-                        placeholder="https://github.com/teammate-b/repo"
+                        placeholder="github.com/teammate-b/repo or username"
                         className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground/50 font-mono text-sm"
                       />
                       {focusedInput === "b" && (
