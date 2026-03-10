@@ -33,7 +33,17 @@ def _fetch_pinned_repos(username: str, headers: dict) -> list[dict]:
 
 def ResolveRepo(github_profile_url: str, project_names: list[str]) -> str:
     """
-    Resolves a GitHub profile URL and a list of project names to the best-matching repository URL.
+    DEPRECATED: Use v2.cross_reference.cross_reference() instead.
+
+    This function resolved a GitHub profile URL to a single best-matching repo URL.
+    It has been superseded by the cross_reference module which:
+      - Matches all resume projects to repos (not just the first hit)
+      - Returns multiple repos_to_clone per candidate
+      - Uses LLM + algorithmic scoring for confident matching
+      - Handles fork validation and fallback logic
+
+    Kept here only for the /resolve-username endpoint in main.py which imports
+    _fetch_pinned_repos directly from this module.
     """
     if not github_profile_url:
         raise ResumeParseException("GitHub profile URL is empty")

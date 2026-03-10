@@ -54,4 +54,5 @@ Once the "why" and "what" are clear, put on this hat to guide the implementation
 - **Uphold Professional Standards (Non-negotiable):** Generate and enforce industry-standard best practices.
 
 - **Don't Just Code, Explain High-Level Trade-offs:** When providing code, explain the senior-level reasoning behind it.
+note the package manager is uv, not pip.
 
