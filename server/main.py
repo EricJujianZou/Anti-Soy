@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -68,9 +68,7 @@ from v2.analysis_service import (
     get_or_create_user,
     get_or_create_repo
 )
-import os
-logger.info("Contents of /data:", os.listdir("/data"))
-logger.info("/data writable:", os.access("/data", os.W_OK))
+
 
 load_dotenv()
 
@@ -78,20 +76,10 @@ load_dotenv()
 DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(
     DATABASE_URL,
-    connect_args={
-        "check_same_thread": False,
-        "timeout": 30,  # Wait up to 30 seconds for lock to be released
-    },
-    pool_pre_ping=True,  # Verify connections before using
-    pool_size=5,  # Connection pool size
-    max_overflow=10,  # Allow up to 10 additional connections
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
 )
-
-# Enable WAL mode for better concurrency
-with engine.connect() as conn:
-    conn.execute(text("PRAGMA journal_mode=WAL"))
-    conn.execute(text("PRAGMA busy_timeout=30000"))  # 30 second timeout
-    conn.commit()
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -345,7 +333,7 @@ async def upload_batch(
     if not priority_list:
         priority_list = DEFAULT_PRIORITIES
 
-    generic_questions_flag = 1 if use_generic_questions and use_generic_questions.lower() == "true" else 0
+    generic_questions_flag = use_generic_questions and use_generic_questions.lower() == "true"
 
     import uuid
     batch_id = str(uuid.uuid4())
@@ -377,7 +365,7 @@ async def upload_batch(
         session.commit()
         
         # 5. Kick off background task
-        background_tasks.add_task(process_batch, batch_id, priority_list, bool(generic_questions_flag))
+        background_tasks.add_task(process_batch, batch_id, priority_list, generic_questions_flag)
         
         return BatchUploadResponse(batch_id=batch_id)
 
@@ -465,7 +453,7 @@ async def startup_event():
         for job in unfinished_jobs:
             logger.info(f"Resuming batch job {job.id} on startup")
             priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
-            asyncio.create_task(process_batch(job.id, priorities, bool(job.use_generic_questions)))
+            asyncio.create_task(process_batch(job.id, priorities, job.use_generic_questions))
 
 
 @app.post("/analyze-stream")
