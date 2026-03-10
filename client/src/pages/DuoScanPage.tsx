@@ -7,10 +7,10 @@ import { RankCard } from "@/components/RankCard";
 import { useAnalyzeStream } from "@/hooks/useAnalyzeStream";
 import {
   fetchCompatibility,
+  resolveUsername,
   type CompatibilityResponse,
   type AnalysisResponse,
   type EvaluationEvent,
-  type InterviewQuestion,
 } from "@/services/api";
 import { getTier, deriveTraits } from "@/utils/rankTier";
 import { cn } from "@/utils/utils";
@@ -227,12 +227,10 @@ function EvidencePanel({
   label,
   analysis,
   evaluation,
-  questions,
 }: {
   label: string;
   analysis: AnalysisResponse;
   evaluation: EvaluationEvent | null;
-  questions: InterviewQuestion[] | null;
 }) {
   const criticalFindings = analysis.bad_practices.findings.filter(
     (f) => f.severity === "critical"
@@ -438,41 +436,7 @@ function EvidencePanel({
         </div>
       </div>
 
-      {/* Interview Questions */}
-      {questions && questions.length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-            Interview Questions
-            <span className="text-xs px-1.5 py-0.5 rounded-sm text-muted-foreground bg-white/5">
-              {questions.length}
-            </span>
-          </h4>
-          <div className="space-y-2">
-            {questions.map((q, i) => (
-              <div key={i} className="rounded border border-border p-3">
-                <p className="font-medium text-sm mb-2">{q.question}</p>
-                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                  <div>
-                    <span className="font-medium text-foreground">
-                      Based on:{" "}
-                    </span>
-                    {q.based_on}
-                  </div>
-                  <div>
-                    <span className="font-medium text-foreground">
-                      Probes:{" "}
-                    </span>
-                    {q.probes}
-                  </div>
-                </div>
-                <span className="inline-block mt-2 text-xs px-1.5 py-0.5 rounded-sm text-muted-foreground bg-white/5">
-                  {q.category}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
@@ -501,8 +465,23 @@ const DuoScanPage = () => {
     if (startedRef.current) return;
     if (!linkA || !linkB) return;
     startedRef.current = true;
-    streamA.startStream(linkA);
-    streamB.startStream(linkB);
+
+    const isUsernameOnly = (s: string) => !s.includes("/");
+
+    const resolveAndStart = async (link: string, startStream: typeof streamA.startStream) => {
+      let resolvedUrl = link;
+      if (isUsernameOnly(link)) {
+        try {
+          resolvedUrl = await resolveUsername(link.trim());
+        } catch {
+          // fall back to original value; the stream will surface the error
+        }
+      }
+      startStream(resolvedUrl, undefined, { skipQuestions: true });
+    };
+
+    resolveAndStart(linkA, streamA.startStream);
+    resolveAndStart(linkB, streamB.startStream);
   }, [linkA, linkB]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch compatibility when both done
@@ -716,7 +695,6 @@ const DuoScanPage = () => {
                       label="Person A"
                       analysis={streamA.analysis}
                       evaluation={streamA.evaluation}
-                      questions={streamA.questions}
                     />
                   </div>
                   <div className="hidden md:block border-l border-border/50" />
@@ -726,7 +704,6 @@ const DuoScanPage = () => {
                       label="Person B"
                       analysis={streamB.analysis}
                       evaluation={streamB.evaluation}
-                      questions={streamB.questions}
                     />
                   </div>
                 </div>

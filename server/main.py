@@ -72,10 +72,9 @@ from v2.analysis_service import (
 load_dotenv()
 
 # Database setup
-BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = BASE_DIR / "database.db"
+DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(
-    f"sqlite:///{DATABASE_PATH}",
+    DATABASE_URL,
     connect_args={
         "check_same_thread": False,
         "timeout": 30,  # Wait up to 30 seconds for lock to be released
