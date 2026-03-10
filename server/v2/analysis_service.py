@@ -283,7 +283,7 @@ def save_evaluation_results(
     repo_evaluation = session.query(RepoEvaluation).filter(RepoEvaluation.repo_id == repo_id).first()
     if repo_evaluation:
         repo_evaluation.evaluated_at = datetime.utcnow()
-        repo_evaluation.is_rejected = 1 if is_rejected else 0
+        repo_evaluation.is_rejected = bool(is_rejected)
         repo_evaluation.rejection_reason = rejection_reason
         repo_evaluation.business_value = json.dumps(business_value) if business_value else json.dumps({})
         repo_evaluation.standout_features = json.dumps(standout_features)
@@ -292,7 +292,7 @@ def save_evaluation_results(
         repo_evaluation = RepoEvaluation(
             repo_id=repo_id,
             evaluated_at=datetime.utcnow(),
-            is_rejected=1 if is_rejected else 0,
+            is_rejected=bool(is_rejected),
             rejection_reason=rejection_reason,
             business_value=json.dumps(business_value) if business_value else json.dumps({}),
             standout_features=json.dumps(standout_features),

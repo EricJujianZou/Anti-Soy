@@ -2,7 +2,7 @@
 SQLAlchemy models for Anti-Soy Candidate Analysis Platform (V2)
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, LargeBinary
+from sqlalchemy import Column, Integer, Boolean, String, DateTime, ForeignKey, Text, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -93,7 +93,7 @@ class RepoEvaluation(Base):
     evaluated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Rejection Status
-    is_rejected = Column(Integer, default=0, nullable=False)  # SQLite boolean (0 or 1)
+    is_rejected = Column(Boolean, default=False, nullable=False)
     rejection_reason = Column(Text)  # Nullable
 
     # Business Value (JSON)
@@ -121,7 +121,7 @@ class BatchJob(Base):
     total_items = Column(Integer, nullable=False)
     status = Column(String, default="pending", nullable=False)  # "pending" | "running" | "completed"
     priorities = Column(Text) # Store as JSON array
-    use_generic_questions = Column(Integer, default=0, nullable=False)  # 0 = LLM questions, 1 = hardcoded
+    use_generic_questions = Column(Boolean, default=False, nullable=False)
 
     # Relationship to batch items
     items = relationship("BatchItem", back_populates="batch_job", cascade="all, delete-orphan", order_by="BatchItem.position")

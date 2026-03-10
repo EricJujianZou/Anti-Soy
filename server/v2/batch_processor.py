@@ -17,8 +17,13 @@ from v2.analysis_service import run_analysis_pipeline, save_analysis_results, ru
 
 logger = logging.getLogger(__name__)
 
-# Use a separate engine for background tasks to avoid sharing sessions across threads incorrectly
-engine = create_engine(os.environ["DATABASE_URL"])
+# Separate engine for background tasks to avoid sharing sessions across threads
+engine = create_engine(
+    os.environ["DATABASE_URL"],
+    pool_pre_ping=True,
+    pool_size=3,
+    max_overflow=5,
+)
 
 async def process_batch(batch_id: str, priorities: list[str] = None, use_generic_questions: bool = False):
     """
