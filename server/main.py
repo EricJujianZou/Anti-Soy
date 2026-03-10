@@ -68,6 +68,9 @@ from v2.analysis_service import (
     get_or_create_user,
     get_or_create_repo
 )
+import os
+logger.info("Contents of /data:", os.listdir("/data"))
+logger.info("/data writable:", os.access("/data", os.W_OK))
 
 load_dotenv()
 
