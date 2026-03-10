@@ -615,6 +615,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                 if bv:
                     try:
                         save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq_full)
+                        session.commit()
                     except Exception as e:
                         logger.error(f"Failed to save evaluation for {repo_url}: {e}")
 
