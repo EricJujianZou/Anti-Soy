@@ -4,6 +4,9 @@ import logging
 import tempfile
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
 
@@ -15,10 +18,7 @@ from v2.analysis_service import run_analysis_pipeline, save_analysis_results, ru
 logger = logging.getLogger(__name__)
 
 # Use a separate engine for background tasks to avoid sharing sessions across threads incorrectly
-# In a real app, this would come from a database config
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
-engine = create_engine(f"sqlite:///{DATABASE_PATH}")
+engine = create_engine(os.environ["DATABASE_URL"])
 
 async def process_batch(batch_id: str, priorities: list[str] = None, use_generic_questions: bool = False):
     """
