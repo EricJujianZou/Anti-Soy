@@ -4,22 +4,31 @@ Service for dealing with giant PDFs that are an amalgamation of many resumes
 This exists because our first customer is the government who amalgamates PDFs as part of their hiring workflow
 """
 
+import json
 import pymupdf
 import tempfile
 import datetime
 import os
 import asyncio
+import logging
 
 from google import genai
 from pathlib import Path
+from v2.cross_reference.config import LLM_MODEL, GEMINI_API_KEY
 
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=gemini_api_key).aio # making client asynchronous to allow for parallelization
+logger = logging.getLogger(__name__)
+client = genai.Client(api_key=GEMINI_API_KEY).aio # making client asynchronous to allow for parallelization
 
 class PageInterval:
     def __init__(self, left, right):
         self.left = left
         self.right = right
+
+    def __str__(self):
+        return f"[{self.left}-{self.right}]"
+    
+    def __repr__(self):
+        return f"[{self.left}-{self.right}]"
 
 # uploads all pages of the amalgam to genai for processing
 # input already assumes the amalgam has been separated into pages and the pages have been saved to some temp directory
@@ -27,7 +36,7 @@ class PageInterval:
 async def upload_pages(files: list[Path]) -> list[genai.types.File]:
     tasks = []
     for path in files:
-        tasks.append(client.files.upload(path))
+        tasks.append(client.files.upload(file=path))
     return await asyncio.gather(*tasks)
 
 # deletes all outstanding page handles on genai's backend
@@ -44,7 +53,24 @@ Returns True if page # starts a resume, false otherwise
 Since there are multiple pages that could be starters, True/False will be returned by the LLM, from which the function returns True/False
 """
 async def kernel_find_resume_starters(page_handles: list[genai.types.File], page: int) -> bool:
-    await client.models.generate_content()
+    response = await client.models.generate_content(
+        model=LLM_MODEL,
+        contents=[
+            page_handles[page],
+            "Does this page appear to be the FIRST page of a resume or CV? "
+            "Look for: a candidate's name at the top, contact information, and sections like summary, objective, or skills. "
+            "Respond with JSON only."
+        ],
+        config=genai.types.GenerateContentConfig(
+            temperature=0.0,
+            max_output_tokens=50,
+            system_instruction="You are a document classifier analyzing individual pages extracted from a multi-resume PDF. Identify whether a given page is the opening page of a new resume.",
+            response_mime_type="application/json",
+            response_schema={"type": "object", "properties": {"is_resume_start": {"type": "boolean"}}, "required": ["is_resume_start"]},
+        )
+    )
+    result = json.loads(response.text)
+    return result["is_resume_start"]
 
 """
 Given a resume starts on the first page of a PDF, and some garbage is amalgamated at the end of the resume, this function finds the page at which the resume should end at
@@ -55,8 +81,40 @@ This should hopefully remove ambiguity on which page to choose as the ender
 After trimming, a new list of pages of every file path that is definitely part of the resume will be returned, which can be assembled by the main function
 """
 async def kernel_trim_resume_pages(page_handles: list[genai.types.File], interval: range) -> PageInterval:
+    # The first page of the interval is the known resume start — used as anchor context
+    first_page = page_handles[interval.start]
+    last_confirmed = interval.start
+
     for page in interval:
-        pass
+        response = await client.models.generate_content(
+            model=LLM_MODEL,
+            contents=[
+                first_page,
+                page_handles[page],
+                "The first document is the opening page of a resume. "
+                "How confident are you (0–100) that the second document is part of the SAME resume? "
+                "Consider: same candidate name, continuation of sections, consistent formatting. "
+                "Respond with JSON only."
+            ],
+            config=genai.types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=50,
+                system_instruction="You are a document classifier determining whether a page belongs to a specific resume. Return a confidence score.",
+                response_mime_type="application/json",
+                response_schema={
+                    "type": "object",
+                    "properties": {"confidence": {"type": "integer", "minimum": 0, "maximum": 100}},
+                    "required": ["confidence"]
+                },
+            )
+        )
+        result = json.loads(response.text)
+        if result["confidence"] >= 50:
+            last_confirmed = page
+        else:
+            break  # sharp confidence drop — resume has ended
+
+    return PageInterval(interval.start, last_confirmed)
 
 async def crack_amalgam_pdf(amalgam_pdf_directory: Path, output_directory: Path):
     timestamp = round(datetime.datetime.now().timestamp())
@@ -70,12 +128,13 @@ async def crack_amalgam_pdf(amalgam_pdf_directory: Path, output_directory: Path)
         # for the first pass, each 1 page temp resume file will be put in a directory to be purged once first pass is completed, that way the server doesn't clog up with random files
         # note that second pass code also lies in this with statement as having each page of the amalgam split off is useful for the second pass as it will pass in the first page of an interval and then will pass in the interval PDF page by page
         # if files were destroyed after first pass, work of splitting pages off would have to be redone which is suboptimal 
-        with tempfile.TemporaryDirectory as tempdir:
+        with tempfile.TemporaryDirectory() as tempdir_str:
+            tempdir = Path(tempdir_str)
             for i, page in enumerate(amalgam_pdf):
                 with pymupdf.open() as staging_pdf:
                     staging_pdf.insert_pdf(amalgam_pdf, from_page=i, to_page=i)
-                    staging_pdf.save(tempdir.joinpath(f"page-${i}.pdf"))
-                    files_first_pass.append(tempdir.joinpath(f"page-${i}.pdf"))
+                    staging_pdf.save(tempdir.joinpath(f"page-{i}.pdf"))
+                    files_first_pass.append(tempdir.joinpath(f"page-{i}.pdf"))
 
             page_handles = await upload_pages(files_first_pass) # uploading all pages to genai
 
@@ -84,22 +143,22 @@ async def crack_amalgam_pdf(amalgam_pdf_directory: Path, output_directory: Path)
             first_pass = await asyncio.gather(*tasks_first_pass)
     
             starter_list = [] # page indexes which resumes start on
-            for i, is_starter in first_pass: # analyzing the result for each page to create the intervals where resumes may potentially be
+            for i, is_starter in enumerate(first_pass): # analyzing the result for each page to create the intervals where resumes may potentially be
                 if is_starter:
                     starter_list.append(i)
 
             # start queuing second pass where we find the end corresponding to each resume starter
             tasks_second_pass = []
-            for i in range(1, starter_list):
+            for i in range(1, len(starter_list)):
                 tasks_second_pass.append(kernel_trim_resume_pages(page_handles, range(starter_list[i - 1], starter_list[i])))
-            tasks_second_pass.append(kernel_trim_resume_pages(starter_list[-1], len(page_handles)))
+            tasks_second_pass.append(kernel_trim_resume_pages(page_handles, range(starter_list[-1], len(page_handles))))
             second_pass = await asyncio.gather(*tasks_second_pass)
 
             # construct resumes from page data collected in the second pass (all pages to include in the resume)
             for page_interval in second_pass:
                 with pymupdf.open() as staging_pdf:
                     staging_pdf.insert_pdf(amalgam_pdf, from_page=page_interval.left, to_page=page_interval.right)
-                    staging_pdf.save(output_directory.joinpath(f"${timestamp}-${page_interval.left}.pdf"))
+                    staging_pdf.save(output_directory.joinpath(f"{timestamp}-{page_interval.left}.pdf"))
             
             # delete previously uploaded files
             await delete_pages(page_handles)
@@ -116,4 +175,4 @@ if __name__ == "main":
             try:
                 crack_amalgam_pdf(Path(directory), Path(folder))
             except Exception as e:
-                print(f"Unable to parse PDF: ${e}")
+                print(f"Unable to parse PDF: {e}")

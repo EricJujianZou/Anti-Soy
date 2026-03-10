@@ -14,6 +14,7 @@ import { usePageTracking } from "./hooks/usePageTracking";
 const UploadPage = React.lazy(() => import("./pages/UploadPage"));
 const BatchDashboard = React.lazy(() => import("./pages/BatchDashboard"));
 const DuoScanPage = React.lazy(() => import("./pages/DuoScanPage"));
+const AmalgamTestPage = React.lazy(() => import("./pages/AmalgamTestPage"));
 
 const queryClient = new QueryClient();
 
@@ -32,6 +33,7 @@ const AppContent = () => {
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/dashboard/:batchId" element={<BatchDashboard />} />
         <Route path="/duo" element={<DuoScanPage />} />
+        <Route path="/internal/amalgam-test" element={<AmalgamTestPage />} />
         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
         <Route path="*" element={<NotFound />} />
       </Routes>
