@@ -122,6 +122,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
+    expose_headers=["X-Resume-Count"],
 )
 
 
@@ -722,3 +723,49 @@ def resolve_username(request: Request, username: str):
         logger.warning(f"GitHub REST fallback failed for {username}: {e}")
 
     raise HTTPException(status_code=404, detail=f"No repositories found for user '{username}'")
+
+
+@app.post("/amalgam/test")
+async def test_amalgam_parser(pdf: UploadFile = File(...)):
+    """
+    Test endpoint for the amalgam PDF parser.
+    Upload a multi-resume PDF; returns a zip of the extracted individual resumes.
+    """
+    import zipfile
+    import io
+    from v2.amalgam_parser import crack_amalgam_pdf
+
+    if not pdf.filename or not pdf.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    contents = await pdf.read()
+
+    with tempfile.TemporaryDirectory() as input_dir, tempfile.TemporaryDirectory() as output_dir:
+        input_path = Path(input_dir) / "amalgam.pdf"
+        output_path = Path(output_dir)
+
+        input_path.write_bytes(contents)
+
+        try:
+            await crack_amalgam_pdf(input_path, output_path)
+        except Exception as e:
+            logger.exception("Amalgam parser failed")
+            raise HTTPException(status_code=500, detail=f"Parser error: {e}")
+
+        output_files = list(output_path.glob("*.pdf"))
+
+        if not output_files:
+            raise HTTPException(status_code=422, detail="No resumes were extracted from the PDF.")
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in sorted(output_files):
+                zf.write(f, arcname=f.name)
+        zip_buffer.seek(0)
+
+        from fastapi.responses import Response
+        return Response(
+            content=zip_buffer.read(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=extracted_resumes.zip", "X-Resume-Count": str(len(output_files))},
+        )
