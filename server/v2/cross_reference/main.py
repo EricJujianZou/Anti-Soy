@@ -11,6 +11,7 @@ Pipeline:
   Step 1  — Parse GitHub URL → extract and validate username.
   Step 2  — Fetch all public repos + pinned repos concurrently.
   Step 2b — Fork validation: skip forks with ≤ 1 commit on the parent repo.
+  Step 2c — Pinned repo validation: foreign-owner pinned repos must have > 1 commit.
   Step 3  — LLM call: extract resume projects + description-based repo matches.
   Step 4  — Algorithmic scoring: name similarity + tech overlap + LLM desc confidence.
   Step 5  — Assemble PersonObject. Pad repos_to_clone to a minimum of 3 using
@@ -106,6 +107,11 @@ async def _run(candidate: CandidateInput) -> PersonObject:
         # Step 2b: Fork validation — skip forks with ≤ 1 commit on parent.
         valid_repos, flags = await _validate_repos(http, repos, username)
 
+        # Step 2c: Pinned repo validation — foreign-owner pinned repos need commit check.
+        # Reassigns `pinned` to only the validated subset; merges flags.
+        pinned, pinned_flags = await _validate_pinned_repos(http, pinned, username)
+        flags.extend(pinned_flags)
+
         if not valid_repos:
             return PersonObject(
                 github_username=username,
@@ -181,6 +187,73 @@ async def _run(candidate: CandidateInput) -> PersonObject:
             repos_to_clone=repos_to_clone,
             flags=flags,
         )
+
+
+async def _validate_pinned_repos(
+    http: httpx.AsyncClient,
+    pinned_repos: list[dict],
+    username: str,
+) -> tuple[list[dict], list[str]]:
+    """
+    Validate pinned repos. Repos owned by the candidate pass through unconditionally.
+    Foreign-owner pinned repos (repos the candidate pinned but doesn't own and didn't
+    fork) are checked for actual contributions:
+      - > 1 commits on that repo → include with correct owner URL, flag as included
+      - ≤ 1 commits → exclude and flag (pinned for visibility, not contribution)
+
+    GraphQL returns the authoritative `url` field (https://github.com/{owner}/{repo})
+    which is used to determine real ownership — the candidate's username is never
+    assumed to be the owner.
+    """
+    flags: list[str] = []
+    validated: list[dict] = []
+    check_list: list[tuple[dict, str, str]] = []  # (repo, owner, repo_name)
+
+    for repo in pinned_repos:
+        url = repo.get("url", "")
+        # Parse owner from the full URL: https://github.com/{owner}/{repo_name}
+        # split("/") on "https://github.com/owner/repo" →
+        #   ["", "", "github.com", "owner", "repo"] — take last two non-empty parts
+        parts = [p for p in url.split("/") if p]
+        if len(parts) < 2:
+            # Malformed or missing URL — pass through, downstream URL fallback handles it
+            validated.append(repo)
+            continue
+        owner = parts[-2]
+        repo_name = parts[-1]
+
+        if owner.lower() == username.lower():
+            # Candidate's own pinned repo — no check needed
+            validated.append(repo)
+        else:
+            # Foreign-owner pinned repo — queue for contribution check
+            check_list.append((repo, owner, repo_name))
+
+    if not check_list:
+        return validated, flags
+
+    # Check contributions concurrently for all foreign-owner pinned repos.
+    counts = await asyncio.gather(
+        *[
+            check_fork_contributions(http, username, owner, repo_name)
+            for _, owner, repo_name in check_list
+        ],
+        return_exceptions=True,
+    )
+
+    for (repo, owner, repo_name), count in zip(check_list, counts):
+        n = int(count) if isinstance(count, int) else 0
+        if n > 1:
+            validated.append(repo)
+            flags.append(
+                f"pinned_foreign_repo_included:{owner}/{repo_name} ({n} commits)"
+            )
+        else:
+            flags.append(
+                f"pinned_foreign_repo_skipped:{owner}/{repo_name} ({n} commit(s))"
+            )
+
+    return validated, flags
 
 
 async def _validate_repos(
@@ -270,13 +343,15 @@ def _pad_repos(
     seen = set(exclude_names)
 
     # 1. Pinned repos first (already surfaced by the candidate as notable work).
+    # Use the repo's own `url` field (set by GraphQL) so foreign-owner repos
+    # keep their correct owner path instead of being rewritten to the candidate.
     for repo in pinned_repos:
         if len(result) >= target:
             break
         name = repo.get("name")
         if name and name not in seen:
             seen.add(name)
-            result.append(f"https://github.com/{username}/{name}")
+            result.append(repo.get("url") or f"https://github.com/{username}/{name}")
 
     # 2. Most recently updated repos from valid_repos.
     if len(result) < target:
