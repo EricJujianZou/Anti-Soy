@@ -8,6 +8,40 @@ description_similarity signal — they are NOT the final match confidence.
 """
 import json
 import logging
+import re
+
+
+def _sanitize_llm_json(raw: str) -> str:
+    """
+    Replace literal control characters that appear inside JSON string values.
+
+    LLMs occasionally output multi-line descriptions with literal newlines (0x0A)
+    inside JSON strings, which violates the spec and causes json.loads to raise
+    "Invalid control character". Structural whitespace (newlines between tokens)
+    is preserved so the JSON shape stays intact.
+
+    Uses a character-by-character state machine to track string context correctly,
+    handling escaped quotes (\") and backslash sequences without false positives.
+    """
+    _CTRL_ESC = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in raw:
+        if escaped:
+            result.append(ch)
+            escaped = False
+        elif ch == "\\":
+            result.append(ch)
+            escaped = True
+        elif ch == '"':
+            result.append(ch)
+            in_string = not in_string
+        elif in_string and ord(ch) < 0x20:
+            result.append(_CTRL_ESC.get(ch, f"\\u{ord(ch):04x}"))
+        else:
+            result.append(ch)
+    return "".join(result)
 
 from v2.gemini_client import get_gemini_client
 from .config import LLM_MODEL
@@ -90,6 +124,13 @@ async def extract_and_match_projects(resume_text: str, repos: list[dict]) -> lis
         logger.warning("Gemini client unavailable — skipping LLM project extraction")
         return []
 
+    # Normalize resume whitespace before injection into the prompt.
+    # Collapses runs of spaces/tabs and reduces blank lines without touching
+    # any non-whitespace characters (URLs, slashes, punctuation all survive).
+    clean_resume = re.sub(r"[ \t]+", " ", resume_text)
+    clean_resume = re.sub(r"\n{2,}", "\n", clean_resume)
+    clean_resume = clean_resume.strip()
+
     repo_summaries = [
         {
             "name": r.get("name"),
@@ -101,7 +142,7 @@ async def extract_and_match_projects(resume_text: str, repos: list[dict]) -> lis
     ]
 
     prompt = _PROMPT_TEMPLATE.format(
-        resume_text=resume_text,
+        resume_text=clean_resume,
         repo_list_json=json.dumps(repo_summaries, indent=2),
     )
 
@@ -122,7 +163,7 @@ async def extract_and_match_projects(resume_text: str, repos: list[dict]) -> lis
                     raw = raw[4:]
                 raw = raw.strip()
 
-            data = json.loads(raw)
+            data = json.loads(_sanitize_llm_json(raw))
             return data.get("projects", [])
 
         except json.JSONDecodeError as exc:
