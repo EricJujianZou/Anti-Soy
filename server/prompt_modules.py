@@ -499,3 +499,75 @@ def build_questions_prompt(
     prompt_parts.append(QUESTIONS_OUTPUT_FORMAT)
 
     return "\n".join(prompt_parts)
+
+
+# =============================================================================
+# MULTI-REPO QUESTIONS PROMPT (aggregated — one call for all candidate repos)
+# =============================================================================
+
+BASE_MULTI_REPO_QUESTIONS_PROMPT = """You are a senior technical interviewer preparing to speak with a software developer.
+
+You have reviewed ALL of the following GitHub repositories belonging to this candidate:
+
+{repos_context}
+
+EVALUATION PRIORITIES: {priority_names}
+
+TASK:
+Generate 3-5 interview questions that holistically probe this candidate's understanding, skills, and patterns across all their projects.
+
+RULES:
+1. Questions must be answerable only by someone who actually wrote or deeply understands the code — not generic textbook answers.
+2. Look for PATTERNS across repos: consistent strengths, recurring weaknesses, or interesting contrasts in tech choices.
+3. Do NOT mention specific file names, line numbers, or variable names in the questions.
+4. Do NOT ask about AI-generation signals or code style issues directly.
+5. Each question should feel tailored to THIS specific developer's body of work.
+"""
+
+
+def build_multi_repo_questions_prompt(
+    repos_data: list[dict],
+    priorities: list[str] | None = None,
+) -> str:
+    """
+    Build a single interview questions prompt that aggregates context from multiple repos.
+    Each element of repos_data must have: repo_url, repo_name, ai_score, bad_practices_score,
+    quality_score, bad_practices_findings (list of finding dicts), code_quality_findings (list).
+    """
+    priorities = _normalize_priorities(priorities)
+    priority_names = _format_priority_names(priorities)
+
+    repos_sections = []
+    for i, rd in enumerate(repos_data, 1):
+        finding_lines = []
+        for finding in rd.get("bad_practices_findings", [])[:3]:
+            finding_lines.append(f"  - [{finding.get('severity', 'warning').upper()}] {finding.get('explanation', '')}")
+        for finding in rd.get("code_quality_findings", [])[:3]:
+            finding_lines.append(f"  - [QUALITY] {finding.get('explanation', '')}")
+
+        findings_text = "\n".join(finding_lines) if finding_lines else "  - No significant findings"
+        repos_sections.append(
+            f"REPO {i}: {rd['repo_name']} ({rd['repo_url']})\n"
+            f"  Scores — AI: {rd['ai_score']}/100 | Bad Practices: {rd['bad_practices_score']}/100 | Quality: {rd['quality_score']}/100\n"
+            f"  Key Findings:\n{findings_text}"
+        )
+
+    repos_context = "\n\n".join(repos_sections)
+
+    prompt_parts = [
+        BASE_MULTI_REPO_QUESTIONS_PROMPT.format(
+            repos_context=repos_context,
+            priority_names=priority_names,
+        )
+    ]
+
+    for priority in priorities:
+        module = QUESTION_MODULES.get(priority, "")
+        if module:
+            ai_score = max(rd.get("ai_score", 0) for rd in repos_data) if repos_data else 0
+            if priority == "ai_detection":
+                module = module.format(ai_score=ai_score)
+            prompt_parts.append(module)
+
+    prompt_parts.append(QUESTIONS_OUTPUT_FORMAT)
+    return "\n".join(prompt_parts)

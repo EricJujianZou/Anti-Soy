@@ -1,15 +1,16 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useCandidateDetail } from "@/hooks/useCandidateDetail";
 import type { CandidateRepoDetail } from "@/services/batchApi";
+import { generateBatchInterviewQuestions } from "@/services/batchApi";
 import type { Finding, InterviewQuestion } from "@/services/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/utils/utils";
-import { ChevronDown, ExternalLink, Github, ArrowLeft, Loader2, AlertCircle } from "lucide-react";
+import { ChevronDown, ExternalLink, Github, ArrowLeft, Loader2, AlertCircle, Sparkles } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CircularScore — inline SVG progress ring + centred score text
@@ -321,16 +322,37 @@ const CandidateAssessment = () => {
   const navigate = useNavigate();
   const { data, isLoading, error } = useCandidateDetail(batchId ?? "", itemId ?? "");
 
-  // Aggregate all interview questions from every repo, tagged with repo name
-  const allQuestions = useMemo<(InterviewQuestion & { repoName: string })[]>(() => {
-    if (!data) return [];
+  const [generatedQuestions, setGeneratedQuestions] = useState<InterviewQuestion[] | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+
+  // Use stored questions from BatchItem, overridden by freshly generated ones
+  const displayedQuestions: InterviewQuestion[] | null = generatedQuestions ?? data?.interview_questions ?? null;
+
+  const handleGenerate = async () => {
+    if (!batchId || !itemId) return;
+    setIsGenerating(true);
+    setGenerateError(null);
+    try {
+      const result = await generateBatchInterviewQuestions(batchId, Number(itemId));
+      setGeneratedQuestions(result.interview_questions);
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : "Failed to generate questions");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Legacy aggregation kept as fallback for old items that still have per-repo questions
+  const legacyQuestions = useMemo<(InterviewQuestion & { repoName: string })[]>(() => {
+    if (!data || displayedQuestions !== null) return [];
     return data.repos.flatMap((repo) =>
       (repo.evaluation.interview_questions ?? []).map((q) => ({
         ...q,
         repoName: repo.repo_name,
       })),
     );
-  }, [data]);
+  }, [data, displayedQuestions]);
 
   if (isLoading) {
     return (
@@ -413,8 +435,9 @@ const CandidateAssessment = () => {
         </section>
 
         {/* ── Interview Questions (aggregated across all repos) ─────────── */}
-        {allQuestions.length > 0 && (
-          <section>
+        <section>
+          {displayedQuestions !== null && displayedQuestions.length > 0 ? (
+            // Stored or freshly-generated questions
             <Collapsible defaultOpen>
               <Card className="border-border">
                 <CollapsibleTrigger asChild>
@@ -425,7 +448,7 @@ const CandidateAssessment = () => {
                           Interview Questions
                         </CardTitle>
                         <Badge variant="outline" className="font-mono tabular-nums">
-                          {allQuestions.length}
+                          {displayedQuestions.length}
                         </Badge>
                       </div>
                       <ChevronDown className="w-4 h-4 text-muted-foreground" />
@@ -434,7 +457,61 @@ const CandidateAssessment = () => {
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <CardContent className="pt-0 space-y-5">
-                    {allQuestions.map((q, i) => (
+                    {displayedQuestions.map((q, i) => (
+                      <div
+                        key={i}
+                        className="border-b border-border/40 pb-5 last:border-0 last:pb-0"
+                      >
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] uppercase tracking-widest font-bold",
+                              CATEGORY_BADGE[q.category] ?? "",
+                            )}
+                          >
+                            {q.category.replace(/_/g, " ")}
+                          </Badge>
+                        </div>
+                        <p className="text-sm font-medium text-foreground mb-2">{q.question}</p>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          <p className="text-xs text-muted-foreground">
+                            <span className="font-semibold text-foreground/70">Based on:</span>{" "}
+                            {q.based_on}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            <span className="font-semibold text-foreground/70">Probes:</span>{" "}
+                            {q.probes}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
+          ) : legacyQuestions.length > 0 ? (
+            // Fallback: old per-repo questions for pre-migration items
+            <Collapsible defaultOpen>
+              <Card className="border-border">
+                <CollapsibleTrigger asChild>
+                  <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <CardTitle className="text-lg uppercase tracking-widest">
+                          Interview Questions
+                        </CardTitle>
+                        <Badge variant="outline" className="font-mono tabular-nums">
+                          {legacyQuestions.length}
+                        </Badge>
+                      </div>
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </div>
+                  </CardHeader>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="pt-0 space-y-5">
+                    {legacyQuestions.map((q, i) => (
                       <div
                         key={i}
                         className="border-b border-border/40 pb-5 last:border-0 last:pb-0"
@@ -470,8 +547,41 @@ const CandidateAssessment = () => {
                 </CollapsibleContent>
               </Card>
             </Collapsible>
-          </section>
-        )}
+          ) : (
+            // Not yet generated — show Generate button
+            <Card className="border-border border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-10 gap-4">
+                <p className="text-sm text-muted-foreground uppercase tracking-widest">
+                  Interview Questions
+                </p>
+                <p className="text-xs text-muted-foreground text-center max-w-xs">
+                  Generate 3–5 tailored questions based on all of{" "}
+                  {data.candidate_name}’s analyzed projects.
+                </p>
+                {generateError && (
+                  <p className="text-xs text-destructive">{generateError}</p>
+                )}
+                <Button
+                  onClick={handleGenerate}
+                  disabled={isGenerating}
+                  className="gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Generate Interview Questions
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </section>
       </main>
     </div>
   );

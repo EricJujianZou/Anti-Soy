@@ -19,12 +19,14 @@ import {
   MessageSquare,
   FileCode,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import {
   AnalysisResponse,
   EvaluationEvent,
   InterviewQuestion,
   api,
+  generateRepoInterviewQuestions,
 } from "@/services/api";
 import { cn } from "@/utils/utils";
 
@@ -54,6 +56,7 @@ const RepoAnalysis = () => {
     evaluation,
     questions,
     questionsError,
+    repoId: streamRepoId,
     startStream,
   } = useAnalyzeStream();
 
@@ -61,6 +64,14 @@ const RepoAnalysis = () => {
   const [manualError, setManualError] = useState<string | null>(null);
   const [isManualLoading, setIsManualLoading] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
+
+  // Generate questions on demand
+  const [generatedQuestions, setGeneratedQuestions] = useState<InterviewQuestion[] | null>(null);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [generateQuestionsError, setGenerateQuestionsError] = useState<string | null>(null);
+
+  // repo_id: prefer stream-provided, fall back to URL param
+  const effectiveRepoId = streamRepoId ?? (repoId && repoId !== "new" ? Number(repoId) : null);
   
   const [feedbackStatus, setFeedbackStatus] = useState<
     "idle" | "submitting" | "success" | "error"
@@ -148,7 +159,11 @@ const RepoAnalysis = () => {
     evaluation: EvaluationEvent | null,
     questions: InterviewQuestion[] | null,
     questionsError: string | null,
+    currentRepoId: number | null,
   ) => {
+    // generatedQuestions (state) takes precedence; fall back to stream questions if non-empty
+    const effectiveDisplayQuestions: InterviewQuestion[] | null =
+      generatedQuestions ?? (questions && questions.length > 0 ? questions : null);
     const criticalFindings = analysis.bad_practices.findings.filter(
       (f) => f.severity === "critical",
     );
@@ -586,8 +601,8 @@ const RepoAnalysis = () => {
                   <span className="flex items-center gap-2">
                     <MessageSquare className="h-4 w-4" />
                     Interview Questions
-                    {questions && questions.length > 0 && (
-                      <Badge variant="outline">{questions.length}</Badge>
+                    {effectiveDisplayQuestions && effectiveDisplayQuestions.length > 0 && (
+                      <Badge variant="outline">{effectiveDisplayQuestions.length}</Badge>
                     )}
                   </span>
                   <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -596,36 +611,17 @@ const RepoAnalysis = () => {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <CardContent className="space-y-3">
-                {!questions ? (
-                  <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span className="text-sm">
-                      Generating interview questions...
-                    </span>
-                  </div>
-                ) : questionsError ? (
-                  <p className="text-sm text-muted-foreground py-4 text-center">
-                    {questionsError}
-                  </p>
-                ) : questions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-4 text-center">
-                    No interview questions generated.
-                  </p>
-                ) : (
-                  questions.map((q, i) => (
+                {effectiveDisplayQuestions && effectiveDisplayQuestions.length > 0 ? (
+                  effectiveDisplayQuestions.map((q, i) => (
                     <div key={i} className="rounded border p-3">
                       <p className="font-medium text-sm mb-2">{q.question}</p>
                       <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                         <div>
-                          <span className="font-medium text-foreground">
-                            Based on:{" "}
-                          </span>
+                          <span className="font-medium text-foreground">Based on: </span>
                           {q.based_on}
                         </div>
                         <div>
-                          <span className="font-medium text-foreground">
-                            Probes:{" "}
-                          </span>
+                          <span className="font-medium text-foreground">Probes: </span>
                           {q.probes}
                         </div>
                       </div>
@@ -634,6 +630,40 @@ const RepoAnalysis = () => {
                       </Badge>
                     </div>
                   ))
+                ) : (
+                  <div className="flex flex-col items-center gap-3 py-6">
+                    <p className="text-sm text-muted-foreground text-center">
+                      Generate tailored interview questions for this repo.
+                    </p>
+                    {generateQuestionsError && (
+                      <p className="text-xs text-destructive">{generateQuestionsError}</p>
+                    )}
+                    <button
+                      onClick={async () => {
+                        if (!currentRepoId) return;
+                        setIsGeneratingQuestions(true);
+                        setGenerateQuestionsError(null);
+                        try {
+                          const result = await generateRepoInterviewQuestions(currentRepoId);
+                          setGeneratedQuestions(result.interview_questions);
+                        } catch (err) {
+                          setGenerateQuestionsError(
+                            err instanceof Error ? err.message : "Failed to generate questions",
+                          );
+                        } finally {
+                          setIsGeneratingQuestions(false);
+                        }
+                      }}
+                      disabled={isGeneratingQuestions || !currentRepoId}
+                      className="flex items-center gap-2 px-4 py-2 rounded bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isGeneratingQuestions ? (
+                        <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</>
+                      ) : (
+                        <><Sparkles className="h-4 w-4" /> Generate Interview Questions</>
+                      )}
+                    </button>
+                  </div>
                 )}
               </CardContent>
             </CollapsibleContent>
@@ -784,7 +814,7 @@ const RepoAnalysis = () => {
         </div>
         {!analysis
           ? renderLoading()
-          : renderResults(analysis, evaluation, questions, questionsError)}
+          : renderResults(analysis, evaluation, questions, questionsError, effectiveRepoId)}
       </main>
     </div>
   );

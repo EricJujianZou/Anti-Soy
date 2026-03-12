@@ -144,6 +144,7 @@ export interface EvaluationEvent {
 
 export interface QuestionsEvent {
   interview_questions: InterviewQuestion[];
+  repo_id?: number;
   error?: string;
 }
 
@@ -207,6 +208,23 @@ export const api = {
     return res.json();
   },
 };
+
+
+/**
+ * Generate (or return cached) interview questions for a single repo.
+ */
+export async function generateRepoInterviewQuestions(
+  repoId: number,
+): Promise<{ interview_questions: InterviewQuestion[]; repo_id: number }> {
+  const res = await fetch(`${API_BASE_URL}/repo/${repoId}/interview-questions`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to generate questions" }));
+    throw new Error(error.detail || "Failed to generate questions");
+  }
+  return res.json();
+}
 
 
 // =============================================================================
