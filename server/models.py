@@ -152,6 +152,24 @@ class BatchItem(Base):
     # Relationships
     batch_job = relationship("BatchJob", back_populates="items")
     repo = relationship("Repo", back_populates="batch_items")
+    batch_repos = relationship("BatchItemRepo", back_populates="batch_item", cascade="all, delete-orphan", order_by="BatchItemRepo.position")
 
     def __repr__(self):
         return f"<BatchItem(id={self.id}, batch_job_id='{self.batch_job_id}', status='{self.status}')>"
+
+
+class BatchItemRepo(Base):
+    """Join table: one BatchItem can link to multiple Repos (all repos analyzed for that candidate)."""
+    __tablename__ = "batch_item_repos"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    batch_item_id = Column(Integer, ForeignKey("batch_items.id", ondelete="CASCADE"), nullable=False)
+    repo_id = Column(Integer, ForeignKey("repos.id", ondelete="CASCADE"), nullable=False)
+    position = Column(Integer, nullable=False, default=0)  # 0 = primary repo
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    batch_item = relationship("BatchItem", back_populates="batch_repos")
+    repo = relationship("Repo")
+
+    def __repr__(self):
+        return f"<BatchItemRepo(batch_item_id={self.batch_item_id}, repo_id={self.repo_id}, position={self.position})>"

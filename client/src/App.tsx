@@ -15,6 +15,7 @@ const UploadPage = React.lazy(() => import("./pages/UploadPage"));
 const BatchDashboard = React.lazy(() => import("./pages/BatchDashboard"));
 const DuoScanPage = React.lazy(() => import("./pages/DuoScanPage"));
 const AmalgamTestPage = React.lazy(() => import("./pages/AmalgamTestPage"));
+const CandidateAssessment = React.lazy(() => import("./pages/CandidateAssessment"));
 
 const queryClient = new QueryClient();
 
@@ -32,6 +33,7 @@ const AppContent = () => {
         <Route path="/repo/:repoId" element={<RepoAnalysis />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/dashboard/:batchId" element={<BatchDashboard />} />
+        <Route path="/batch/:batchId/candidate/:itemId" element={<CandidateAssessment />} />
         <Route path="/duo" element={<DuoScanPage />} />
         <Route path="/internal/amalgam-test" element={<AmalgamTestPage />} />
         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

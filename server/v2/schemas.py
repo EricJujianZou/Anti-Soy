@@ -307,6 +307,25 @@ class BatchUploadResponse(BaseModel):
     batch_id: str
 
 
+class CandidateRepoDetail(BaseModel):
+    """Full analysis + evaluation for one repo belonging to a batch candidate."""
+    repo_id: int
+    repo_url: str
+    repo_name: str
+    overall_score: int
+    analysis: AnalysisResponse
+    evaluation: EvaluateResponse
+
+
+class CandidateDetailResponse(BaseModel):
+    """Response for GET /batch/{batch_id}/items/{item_id}"""
+    item_id: int
+    candidate_name: str
+    github_profile_url: str | None
+    overall_score: int  # average across all repos
+    repos: list[CandidateRepoDetail]
+
+
 # =============================================================================
 # COMPATIBILITY (DUO SCAN)
 # =============================================================================

@@ -35,22 +35,15 @@ const VerdictBadge = ({ verdict }: { verdict: BatchVerdict | string | null | und
   );
 };
 
-const CandidateCard = ({ item, batchPriorities }: { item: BatchItemStatus, batchPriorities?: string[] }) => {
+const CandidateCard = ({ item, batchId, batchPriorities }: { item: BatchItemStatus; batchId?: string; batchPriorities?: string[] }) => {
   const navigate = useNavigate();
   const isCompleted = item.status === "completed";
   const isError = item.status === "error";
   const isPending = item.status === "pending" || item.status === "running";
 
   const handleClick = () => {
-    if (isCompleted && item.repo_id) {
-      const searchParams = new URLSearchParams();
-      if (item.repo_url) {
-        searchParams.append("link", item.repo_url);
-      }
-      if (batchPriorities && batchPriorities.length > 0) {
-        searchParams.append("priorities", batchPriorities.join(","));
-      }
-      navigate(`/repo/${item.repo_id}?${searchParams.toString()}`);
+    if (isCompleted && batchId) {
+      navigate(`/batch/${batchId}/candidate/${item.id}`);
     }
   };
 
@@ -236,7 +229,7 @@ const BatchDashboard = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {sortedItems.map((item, index) => (
-              <CandidateCard key={item.id ?? `item-${index}`} item={item} batchPriorities={priorities} />
+              <CandidateCard key={item.id ?? `item-${index}`} item={item} batchId={batchId} batchPriorities={priorities} />
             ))}
           </div>
         )}

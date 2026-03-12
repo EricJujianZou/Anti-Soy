@@ -1,6 +1,6 @@
 const rawBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const API_BASE_URL = rawBaseUrl.replace(/\/+$/, "");
-import type { PriorityKey } from "./api";
+import type { PriorityKey, AnalysisResponse, EvaluateResponse } from "./api";
 
 export interface BatchVerdict {
   type: string;
@@ -68,5 +68,39 @@ export async function getBatchStatus(batchId: string): Promise<BatchStatusRespon
     throw new Error(error.detail || "Failed to get batch status");
   }
 
+  return res.json();
+}
+
+
+// =============================================================================
+// CANDIDATE DETAIL
+// =============================================================================
+
+export interface CandidateRepoDetail {
+  repo_id: number;
+  repo_url: string;
+  repo_name: string;
+  overall_score: number;
+  analysis: AnalysisResponse;
+  evaluation: EvaluateResponse;
+}
+
+export interface CandidateDetailResponse {
+  item_id: number;
+  candidate_name: string;
+  github_profile_url: string | null;
+  overall_score: number;
+  repos: CandidateRepoDetail[];
+}
+
+export async function getCandidateDetail(
+  batchId: string,
+  itemId: number,
+): Promise<CandidateDetailResponse> {
+  const res = await fetch(`${API_BASE_URL}/batch/${batchId}/items/${itemId}`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch candidate detail" }));
+    throw new Error(error.detail || "Failed to fetch candidate detail");
+  }
   return res.json();
 }
