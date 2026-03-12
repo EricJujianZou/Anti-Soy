@@ -10,7 +10,7 @@ load_dotenv()
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
 
-from models import BatchJob, BatchItem, Repo, User
+from models import BatchJob, BatchItem, BatchItemRepo, Repo, User
 from v2.resume_parser import GeneralExtractor, ExtractCandidateInfo, ResumeParseException
 from v2.cross_reference import cross_reference, CandidateInput
 from v2.analysis_service import run_analysis_pipeline, save_analysis_results, run_evaluation_pipeline, save_evaluation_results
@@ -134,7 +134,7 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                 from v2.analysis_service import get_or_create_user, get_or_create_repo
                 primary_repo_id: int | None = None
 
-                for repo_url in person.repos_to_clone:
+                for repo_position, repo_url in enumerate(person.repos_to_clone):
                     url_parts = repo_url.rstrip("/").split("/")
                     repo_username = url_parts[-2]
                     repo_name = url_parts[-1]
@@ -147,6 +147,19 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                     if primary_repo_id is None:
                         primary_repo_id = repo.id
                         item.repo_url = repo_url
+                        session.commit()
+
+                    # Link this repo to the batch item via the join table
+                    existing_link = session.query(BatchItemRepo).filter(
+                        BatchItemRepo.batch_item_id == item.id,
+                        BatchItemRepo.repo_id == repo.id,
+                    ).first()
+                    if not existing_link:
+                        session.add(BatchItemRepo(
+                            batch_item_id=item.id,
+                            repo_id=repo.id,
+                            position=repo_position,
+                        ))
                         session.commit()
 
                     # Skip repos that are already fully analyzed

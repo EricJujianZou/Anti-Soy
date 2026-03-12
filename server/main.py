@@ -28,11 +28,11 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 logger = logging.getLogger(__name__)
 
-from models import Base, User, Repo, RepoAnalysis, RepoEvaluation, BatchJob, BatchItem
+from models import Base, User, Repo, RepoAnalysis, RepoEvaluation, BatchJob, BatchItem, BatchItemRepo
 
 # V2 imports
 from v2.data_extractor import extract_repo_data
@@ -50,6 +50,8 @@ from v2.schemas import (
     BatchStatusResponse,
     BatchItemStatus,
     BatchUploadResponse,
+    CandidateRepoDetail,
+    CandidateDetailResponse,
     CompatibilityRequest,
     CompatibilityResponse,
     CompatibilityCallout,
@@ -172,6 +174,34 @@ def build_analysis_response(repo: Repo, repo_analysis: RepoAnalysis) -> Analysis
         code_quality=code_quality_data,
         files_analyzed=files_analyzed,
     )
+
+
+def build_evaluate_response(repo: Repo, repo_evaluation: RepoEvaluation) -> EvaluateResponse:
+    """Build EvaluateResponse from database entry."""
+    return EvaluateResponse(
+        repo_id=repo.id,
+        repo_url=repo.github_link,
+        is_rejected=bool(repo_evaluation.is_rejected),
+        rejection_reason=repo_evaluation.rejection_reason,
+        business_value=json.loads(repo_evaluation.business_value),
+        standout_features=json.loads(repo_evaluation.standout_features),
+        interview_questions=json.loads(repo_evaluation.interview_questions),
+    )
+
+
+def _compute_overall_score(repo_analysis: RepoAnalysis, repo_evaluation: RepoEvaluation) -> int:
+    """Compute composite 0-100 score for a single repo (used in batch status + candidate detail)."""
+    score = 0
+    bv = json.loads(repo_evaluation.business_value)
+    if bv.get("solves_real_problem", False):
+        score += 35
+    score += round(repo_analysis.code_quality_score / 100 * 25)
+    sf = json.loads(repo_evaluation.standout_features)
+    if sf:
+        score += 20
+    if repo_analysis.ai_slop_score < 50:
+        score += 20
+    return score
 
 
 # =============================================================================
@@ -404,20 +434,7 @@ def get_batch_status(request: Request, batch_id: str):
 
                 # Compute overall score (0-100)
                 if item.repo.repo_analysis and item.repo.repo_evaluation:
-                    score = 0
-                    # solves_real_problem: 35 points
-                    bv = json.loads(item.repo.repo_evaluation.business_value)
-                    if bv.get("solves_real_problem", False):
-                        score += 35
-                    # code_quality: 0-25 points
-                    score += round(item.repo.repo_analysis.code_quality_score / 100 * 25)
-                    # standout_features: 20 points if non-empty
-                    if standout_features:
-                        score += 20
-                    # AI bonus: 20 points if ai_slop_score < 50
-                    if item.repo.repo_analysis.ai_slop_score < 50:
-                        score += 20
-                    overall_score = score
+                    overall_score = _compute_overall_score(item.repo.repo_analysis, item.repo.repo_evaluation)
 
             item_statuses.append(BatchItemStatus(
                 id=item.id,
@@ -440,6 +457,80 @@ def get_batch_status(request: Request, batch_id: str):
             completed_items=completed_count,
             status=batch_job.status,
             items=item_statuses
+        )
+
+
+@app.get("/batch/{batch_id}/items/{item_id}", response_model=CandidateDetailResponse)
+@limiter.limit("30/minute")
+def get_candidate_detail(request: Request, batch_id: str, item_id: int):
+    """
+    Get full analysis + evaluation for every repo analyzed for a batch candidate.
+    Falls back to item.repo_id for old items that pre-date the BatchItemRepo join table.
+    """
+    with Session(engine) as session:
+        item = session.query(BatchItem).filter(
+            BatchItem.id == item_id,
+            BatchItem.batch_job_id == batch_id,
+        ).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Candidate not found in this batch")
+        if item.status != "completed":
+            raise HTTPException(status_code=400, detail=f"Candidate analysis not yet complete (status: {item.status})")
+
+        # Collect repo IDs — join table preferred; fall back to primary repo for legacy items.
+        batch_repos = (
+            session.query(BatchItemRepo)
+            .filter(BatchItemRepo.batch_item_id == item.id)
+            .order_by(BatchItemRepo.position)
+            .all()
+        )
+        repo_ids = [br.repo_id for br in batch_repos] if batch_repos else ([item.repo_id] if item.repo_id else [])
+
+        if not repo_ids:
+            raise HTTPException(status_code=404, detail="No analyzed repositories found for this candidate")
+
+        # Single query with eager-loaded relationships — eliminates N+1 lazy-load round trips
+        repos_map = {
+            r.id: r
+            for r in session.query(Repo)
+            .options(
+                joinedload(Repo.repo_analysis),
+                joinedload(Repo.repo_evaluation),
+                joinedload(Repo.user),
+            )
+            .filter(Repo.id.in_(repo_ids))
+            .all()
+        }
+
+        repo_details: list[CandidateRepoDetail] = []
+        scores: list[int] = []
+
+        for repo_id in repo_ids:
+            repo = repos_map.get(repo_id)
+            if not repo or not repo.repo_analysis or not repo.repo_evaluation:
+                continue
+            score = _compute_overall_score(repo.repo_analysis, repo.repo_evaluation)
+            scores.append(score)
+            repo_details.append(CandidateRepoDetail(
+                repo_id=repo.id,
+                repo_url=repo.github_link,
+                repo_name=repo.repo_name,
+                overall_score=score,
+                analysis=build_analysis_response(repo, repo.repo_analysis),
+                evaluation=build_evaluate_response(repo, repo.repo_evaluation),
+            ))
+
+        if not repo_details:
+            raise HTTPException(status_code=404, detail="No completed repo analyses found for this candidate")
+
+        overall_score = round(sum(scores) / len(scores))
+
+        return CandidateDetailResponse(
+            item_id=item.id,
+            candidate_name=item.candidate_name or "Unknown",
+            github_profile_url=item.github_profile_url,
+            overall_score=overall_score,
+            repos=repo_details,
         )
 
 
