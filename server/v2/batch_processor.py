@@ -133,6 +133,7 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                 # item.repo_id is linked to the primary (first/highest-confidence) repo.
                 from v2.analysis_service import get_or_create_user, get_or_create_repo
                 primary_repo_id: int | None = None
+                primary_user = None
 
                 for repo_position, repo_url in enumerate(person.repos_to_clone):
                     url_parts = repo_url.rstrip("/").split("/")
@@ -146,6 +147,7 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                     # Track primary repo (first in list) for item linkage
                     if primary_repo_id is None:
                         primary_repo_id = repo.id
+                        primary_user = user
                         item.repo_url = repo_url
                         session.commit()
 
@@ -172,7 +174,7 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
 
                         bv, sf, ir, rr, iq = run_evaluation_pipeline(
                             repo_url, repo_name, ai_slop, bad_practices, code_quality, extracted_data, priorities,
-                            use_generic_questions=use_generic_questions,
+                            skip_questions=True,  # questions are generated on-demand per batch item
                         )
                         save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq)
                     except Exception as e:
@@ -181,6 +183,14 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
 
                 # 10. Update item status
                 item.repo_id = primary_repo_id
+
+                # Pre-populate generic questions on the primary User so the UI never shows a Generate button.
+                # Only set if not already generated (don't overwrite real questions with generic ones).
+                if use_generic_questions and primary_user and not primary_user.interview_questions:
+                    from prompt_modules import HARDCODED_INTERVIEW_QUESTIONS
+                    import json as _json
+                    primary_user.interview_questions = _json.dumps(HARDCODED_INTERVIEW_QUESTIONS)
+
                 item.status = "completed"
                 item.completed_at = datetime.utcnow()
                 session.commit()

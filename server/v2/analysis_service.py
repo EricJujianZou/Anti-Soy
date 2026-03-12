@@ -13,7 +13,7 @@ from v2.feature_extractor import extract_features
 from v2.analyzers import analyze_ai_slop, analyze_bad_practices, analyze_code_quality
 from v2.schemas import Verdict, VALID_PRIORITIES, DEFAULT_PRIORITIES
 from v2.clone_script import clone_repo
-from prompt_modules import build_evaluation_prompt, build_questions_prompt, HARDCODED_INTERVIEW_QUESTIONS
+from prompt_modules import build_evaluation_prompt, build_questions_prompt, build_multi_repo_questions_prompt, HARDCODED_INTERVIEW_QUESTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -301,3 +301,123 @@ def save_evaluation_results(
         session.add(repo_evaluation)
     session.flush()
     return repo_evaluation
+
+
+def run_questions_from_db(
+    repo: Repo,
+    repo_analysis: RepoAnalysis,
+    priorities: list[str] = None,
+) -> list:
+    """
+    Generate single-repo interview questions from stored analysis data — no re-cloning.
+    Reconstructs findings context from the persisted JSON blobs.
+    """
+    import os
+    from google import genai
+
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        return []
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+    bad_practices_data = json.loads(repo_analysis.bad_practices_data)
+    code_quality_data = json.loads(repo_analysis.code_quality_data)
+    files_analyzed = json.loads(repo_analysis.files_analyzed)
+
+    # Reconstruct findings_context from stored data (same logic as _build_findings_context)
+    findings_context = []
+    for finding in bad_practices_data.get("findings", []):
+        if is_test_file(finding.get("file", "")):
+            continue
+        findings_context.append({
+            "category": "Bad Practice",
+            "type": finding["type"],
+            "severity": finding["severity"],
+            "file": finding["file"],
+            "line": finding["line"],
+            "snippet": finding.get("snippet", "")[:300],
+            "explanation": finding["explanation"],
+        })
+        if len(findings_context) >= 5:
+            break
+    for finding in code_quality_data.get("findings", []):
+        if is_test_file(finding.get("file", "")):
+            continue
+        findings_context.append({
+            "category": "Code Quality",
+            "type": finding["type"],
+            "severity": finding["severity"],
+            "file": finding["file"],
+            "line": finding["line"],
+            "snippet": finding.get("snippet", "")[:300],
+            "explanation": finding["explanation"],
+        })
+        if len(findings_context) >= 10:
+            break
+
+    file_tree = [f["path"] for f in files_analyzed[:10]]
+
+    class _ScoreStub:
+        def __init__(self, score):
+            self.score = score
+            self.confidence = "medium"
+
+    questions_prompt = build_questions_prompt(
+        repo_url=repo.github_link,
+        repo_name=repo.repo_name,
+        ai_slop_result=_ScoreStub(repo_analysis.ai_slop_score),
+        bad_practices_result=_ScoreStub(repo_analysis.bad_practices_score),
+        code_quality_result=_ScoreStub(repo_analysis.code_quality_score),
+        file_tree=file_tree,
+        findings_context=findings_context,
+        priorities=priorities,
+    )
+
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=questions_prompt,
+                config={"http_options": {"timeout": 30_000}},
+            )
+            data = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+            return data.get("interview_questions", [])[:7]
+        except Exception as e:
+            logger.warning(f"Gemini questions error (attempt {attempt + 1}/2): {e}")
+
+    return []
+
+
+def run_multi_repo_questions(
+    repos_data: list[dict],
+    priorities: list[str] = None,
+) -> list:
+    """
+    Generate 3-5 interview questions aggregated across multiple repos in a single LLM call.
+    repos_data: list of {repo_url, repo_name, ai_score, bad_practices_score, quality_score,
+                          bad_practices_findings, code_quality_findings}
+    """
+    import os
+    from google import genai
+
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        return []
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    prompt = build_multi_repo_questions_prompt(repos_data, priorities)
+
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config={"http_options": {"timeout": 45_000}},
+            )
+            data = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+            return data.get("interview_questions", [])[:5]
+        except Exception as e:
+            logger.warning(f"Gemini multi-repo questions error (attempt {attempt + 1}/2): {e}")
+
+    return []

@@ -1,6 +1,6 @@
 const rawBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const API_BASE_URL = rawBaseUrl.replace(/\/+$/, "");
-import type { PriorityKey, AnalysisResponse, EvaluateResponse } from "./api";
+import type { PriorityKey, AnalysisResponse, EvaluateResponse, InterviewQuestion } from "./api";
 
 export interface BatchVerdict {
   type: string;
@@ -91,6 +91,7 @@ export interface CandidateDetailResponse {
   github_profile_url: string | null;
   overall_score: number;
   repos: CandidateRepoDetail[];
+  interview_questions: InterviewQuestion[] | null;  // null = not yet generated
 }
 
 export async function getCandidateDetail(
@@ -101,6 +102,20 @@ export async function getCandidateDetail(
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Failed to fetch candidate detail" }));
     throw new Error(error.detail || "Failed to fetch candidate detail");
+  }
+  return res.json();
+}
+
+export async function generateBatchInterviewQuestions(
+  batchId: string,
+  itemId: number,
+): Promise<{ interview_questions: InterviewQuestion[] }> {
+  const res = await fetch(`${API_BASE_URL}/batch/${batchId}/items/${itemId}/interview-questions`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to generate questions" }));
+    throw new Error(error.detail || "Failed to generate questions");
   }
   return res.json();
 }

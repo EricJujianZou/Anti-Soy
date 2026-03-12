@@ -324,6 +324,7 @@ class CandidateDetailResponse(BaseModel):
     github_profile_url: str | None
     overall_score: int  # average across all repos
     repos: list[CandidateRepoDetail]
+    interview_questions: list[InterviewQuestion] | None = None  # None = not yet generated
 
 
 # =============================================================================

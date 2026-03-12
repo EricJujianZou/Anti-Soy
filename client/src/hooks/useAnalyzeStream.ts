@@ -13,6 +13,7 @@ export interface StreamState {
   evaluation: EvaluationEvent | null;
   questions: InterviewQuestion[] | null;
   questionsError: string | null;
+  repoId: number | null;
   isDone: boolean;
 }
 
@@ -23,6 +24,7 @@ const initialState: StreamState = {
   evaluation: null,
   questions: null,
   questionsError: null,
+  repoId: null,
   isDone: false,
 };
 
@@ -48,6 +50,7 @@ export function useAnalyzeStream() {
           ...prev,
           questions: data.interview_questions,
           questionsError: data.error ?? null,
+          repoId: data.repo_id ?? prev.repoId,
         }));
       },
       onDone: () => {

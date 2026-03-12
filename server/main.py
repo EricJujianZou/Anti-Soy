@@ -68,7 +68,9 @@ from v2.analysis_service import (
     run_analysis_pipeline, 
     run_evaluation_pipeline,
     get_or_create_user,
-    get_or_create_repo
+    get_or_create_repo,
+    run_questions_from_db,
+    run_multi_repo_questions,
 )
 
 
@@ -225,10 +227,12 @@ def build_evaluation_event_json(repo_evaluation: RepoEvaluation) -> str:
     return json.dumps(event)
 
 
-def build_questions_event_json(repo_evaluation: RepoEvaluation) -> str:
+def build_questions_event_json(repo_evaluation: RepoEvaluation, repo_id: int) -> str:
     """Build JSON string for the 'questions' SSE event."""
+    iq = json.loads(repo_evaluation.interview_questions) if repo_evaluation.interview_questions else []
     event = {
-        "interview_questions": json.loads(repo_evaluation.interview_questions),
+        "interview_questions": iq,
+        "repo_id": repo_id,
     }
     return json.dumps(event)
 
@@ -525,20 +529,132 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
 
         overall_score = round(sum(scores) / len(scores))
 
+        # Questions cached on the primary User — candidate-scoped, persists across batch runs
+        interview_questions = None
+        primary_repo = repos_map.get(repo_ids[0]) if repo_ids else None
+        if primary_repo and primary_repo.user and primary_repo.user.interview_questions:
+            interview_questions = json.loads(primary_repo.user.interview_questions)
+
         return CandidateDetailResponse(
             item_id=item.id,
             candidate_name=item.candidate_name or "Unknown",
             github_profile_url=item.github_profile_url,
             overall_score=overall_score,
             repos=repo_details,
+            interview_questions=interview_questions,
         )
+
+
+@app.post("/batch/{batch_id}/items/{item_id}/interview-questions")
+@limiter.limit("10/minute")
+def generate_batch_interview_questions(request: Request, batch_id: str, item_id: int):
+    """
+    Generate (or return cached) aggregated interview questions for all repos of a batch candidate.
+    One LLM call across all repos — saves result to User.interview_questions (candidate-scoped cache).
+    """
+    with Session(engine) as session:
+        item = session.query(BatchItem).filter(
+            BatchItem.id == item_id,
+            BatchItem.batch_job_id == batch_id,
+        ).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Candidate not found in this batch")
+        if item.status != "completed":
+            raise HTTPException(status_code=400, detail="Candidate analysis not yet complete")
+
+        batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        priorities = json.loads(batch_job.priorities) if batch_job and batch_job.priorities else DEFAULT_PRIORITIES
+
+        batch_repos = (
+            session.query(BatchItemRepo)
+            .filter(BatchItemRepo.batch_item_id == item.id)
+            .order_by(BatchItemRepo.position)
+            .all()
+        )
+        repo_ids = [br.repo_id for br in batch_repos] if batch_repos else ([item.repo_id] if item.repo_id else [])
+        if not repo_ids:
+            raise HTTPException(status_code=404, detail="No repos found for this candidate")
+
+        repos = (
+            session.query(Repo)
+            .options(joinedload(Repo.repo_analysis), joinedload(Repo.user))
+            .filter(Repo.id.in_(repo_ids))
+            .all()
+        )
+        repos_map = {r.id: r for r in repos}
+
+        # Questions are cached on the primary User (position=0 repo owner) — candidate-scoped
+        primary_repo = repos_map.get(repo_ids[0]) if repos_map.get(repo_ids[0]) else None
+        primary_user = primary_repo.user if primary_repo else None
+        if primary_user and primary_user.interview_questions:
+            return {"interview_questions": json.loads(primary_user.interview_questions)}
+
+        repos_data = []
+        for repo_id in repo_ids:
+            repo = repos_map.get(repo_id)
+            if not repo or not repo.repo_analysis:
+                continue
+            bp_data = json.loads(repo.repo_analysis.bad_practices_data)
+            cq_data = json.loads(repo.repo_analysis.code_quality_data)
+            repos_data.append({
+                "repo_url": repo.github_link,
+                "repo_name": repo.repo_name,
+                "ai_score": repo.repo_analysis.ai_slop_score,
+                "bad_practices_score": repo.repo_analysis.bad_practices_score,
+                "quality_score": repo.repo_analysis.code_quality_score,
+                "bad_practices_findings": bp_data.get("findings", []),
+                "code_quality_findings": cq_data.get("findings", []),
+            })
+
+        if not repos_data:
+            raise HTTPException(status_code=404, detail="No analyzed repos found for this candidate")
+
+        questions = run_multi_repo_questions(repos_data, priorities)
+        if primary_user:
+            primary_user.interview_questions = json.dumps(questions)
+            session.commit()
+
+        return {"interview_questions": questions}
+
+
+@app.post("/repo/{repo_id}/interview-questions")
+@limiter.limit("10/minute")
+def generate_repo_interview_questions(request: Request, repo_id: int):
+    """
+    Generate (or return cached) interview questions for a single repository.
+    Saves result to RepoEvaluation.interview_questions.
+    """
+    with Session(engine) as session:
+        repo = (
+            session.query(Repo)
+            .options(
+                joinedload(Repo.repo_analysis),
+                joinedload(Repo.repo_evaluation),
+                joinedload(Repo.user),
+            )
+            .filter(Repo.id == repo_id)
+            .first()
+        )
+        if not repo or not repo.repo_analysis:
+            raise HTTPException(status_code=404, detail="Repository not found or not yet analyzed")
+
+        # Return cached if already generated (non-empty list)
+        if repo.repo_evaluation and repo.repo_evaluation.interview_questions:
+            existing = json.loads(repo.repo_evaluation.interview_questions)
+            if existing:
+                return {"interview_questions": existing, "repo_id": repo_id}
+
+        questions = run_questions_from_db(repo, repo.repo_analysis)
+
+        if repo.repo_evaluation:
+            repo.repo_evaluation.interview_questions = json.dumps(questions)
+            session.commit()
+
+        return {"interview_questions": questions, "repo_id": repo_id}
 
 
 @app.on_event("startup")
 async def startup_event():
-    """
-    Resume any pending or running batch jobs on startup.
-    """
     with Session(engine) as session:
         # Find all jobs that aren't completed
         unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
@@ -594,7 +710,7 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
                 if repo.repo_analysis and repo.repo_evaluation:
                     yield f"event: analysis\ndata: {build_analysis_event_json(repo, repo.repo_analysis)}\n\n"
                     yield f"event: evaluation\ndata: {build_evaluation_event_json(repo.repo_evaluation)}\n\n"
-                    yield f"event: questions\ndata: {build_questions_event_json(repo.repo_evaluation)}\n\n"
+                    yield f"event: questions\ndata: {build_questions_event_json(repo.repo_evaluation, repo.id)}\n\n"
                     yield f"event: done\ndata: {{}}\n\n"
                     return
 
@@ -689,24 +805,24 @@ def analyze_repo_stream(request: Request, body: AnalyzeRequest):
 
                 # === LLM PHASE ===
 
-                # 8. LLM Call 1: Business value + standout features
+                # 8. LLM Call 1: Business value + standout features (questions always skipped — generated on demand)
                 bv, sf, ir, rr, iq_full = run_evaluation_pipeline(
                     repo_url, repo_name,
                     ai_slop_result, bad_practices_result, code_quality_result,
                     extracted_data,
                     priorities=priorities,
-                    skip_questions=body.skip_questions,
+                    skip_questions=True,
                 )
 
                 yield f"event: evaluation\ndata: {json.dumps({'business_value': bv, 'standout_features': sf, 'is_rejected': ir, 'rejection_reason': rr})}\n\n"
 
-                # 10. LLM Call 2: Interview questions (already returned from evaluation pipeline in our new service)
-                yield f"event: questions\ndata: {json.dumps({'interview_questions': iq_full})}\n\n"
+                # Send questions event with empty list + repo_id so frontend can show Generate button
+                yield f"event: questions\ndata: {json.dumps({'interview_questions': [], 'repo_id': repo.id})}\n\n"
 
-                # 11. Save evaluation to DB
+                # 11. Save evaluation to DB (no interview questions — generated on demand)
                 if bv:
                     try:
-                        save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq_full)
+                        save_evaluation_results(session, repo.id, bv, sf, ir, rr, [])
                         session.commit()
                     except Exception as e:
                         logger.error(f"Failed to save evaluation for {repo_url}: {e}")

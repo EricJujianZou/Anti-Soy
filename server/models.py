@@ -20,6 +20,7 @@ class User(Base):
     github_link = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    interview_questions = Column(Text, nullable=True)  # JSON: aggregated questions, generated on-demand, cached across batch runs
 
     # Relationship to repos
     repos = relationship("Repo", back_populates="user", cascade="all, delete-orphan")
