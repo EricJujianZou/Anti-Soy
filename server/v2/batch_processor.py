@@ -4,6 +4,7 @@ import logging
 import tempfile
 import os
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,6 +15,7 @@ from models import BatchJob, BatchItem, BatchItemRepo, Repo, User
 from v2.resume_parser import GeneralExtractor, ExtractCandidateInfo, ResumeParseException
 from v2.cross_reference import cross_reference, CandidateInput
 from v2.analysis_service import run_analysis_pipeline, save_analysis_results, run_evaluation_pipeline, save_evaluation_results
+from v2.schemas import DEFAULT_PRIORITIES
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,10 @@ engine = create_engine(
     max_overflow=5,
 )
 
-async def process_batch(batch_id: str, priorities: list[str] = None, use_generic_questions: bool = False):
+# Keep per-batch DB pressure below pool limits to avoid QueuePool timeouts.
+BATCH_ITEM_CONCURRENCY = int(os.getenv("BATCH_ITEM_CONCURRENCY", "4"))
+
+async def process_batch(batch_id: str, priorities: Optional[list[str]] = None, use_generic_questions: bool = False):
     """
     Background task to process a batch of resumes.
     """
@@ -41,9 +46,18 @@ async def process_batch(batch_id: str, priorities: list[str] = None, use_generic
         batch_job.status = "running"
         session.commit()
 
-        # Process items concurrently
-        tasks = [process_single_item(item.id, priorities, use_generic_questions) for item in batch_job.items if item.status in ["pending", "running"]]
-        await asyncio.gather(*tasks)
+        # Process items with bounded concurrency to avoid DB pool exhaustion.
+        item_ids = [item.id for item in batch_job.items if item.status in ["pending", "running"]]
+        semaphore = asyncio.Semaphore(max(1, BATCH_ITEM_CONCURRENCY))
+
+        async def _run_item(item_id: int):
+            async with semaphore:
+                await process_single_item(item_id, priorities, use_generic_questions)
+
+        results = await asyncio.gather(*[_run_item(item_id) for item_id in item_ids], return_exceptions=True)
+        for item_id, result in zip(item_ids, results):
+            if isinstance(result, Exception):
+                logger.exception(f"Batch item {item_id} failed with unhandled exception: {result}")
         
         # Reload to check status
         session.refresh(batch_job)
@@ -51,7 +65,7 @@ async def process_batch(batch_id: str, priorities: list[str] = None, use_generic
         session.commit()
         logger.info(f"Completed batch processing for {batch_id}")
 
-async def process_single_item(item_id: int, priorities: list[str] = None, use_generic_questions: bool = False):
+async def process_single_item(item_id: int, priorities: Optional[list[str]] = None, use_generic_questions: bool = False):
     """
     Processes a single resume item.
     """
@@ -170,11 +184,12 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                         continue
 
                     try:
+                        effective_priorities = priorities or DEFAULT_PRIORITIES
                         extracted_data, ai_slop, bad_practices, code_quality, verdict = run_analysis_pipeline(repo_url)
                         save_analysis_results(session, repo.id, extracted_data, ai_slop, bad_practices, code_quality, verdict)
 
                         bv, sf, ir, rr, iq = run_evaluation_pipeline(
-                            repo_url, repo_name, ai_slop, bad_practices, code_quality, extracted_data, priorities,
+                            repo_url, repo_name, ai_slop, bad_practices, code_quality, extracted_data, effective_priorities,
                             skip_questions=True,  # questions are generated on-demand per batch item
                         )
                         save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq)
