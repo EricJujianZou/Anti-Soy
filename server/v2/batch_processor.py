@@ -106,6 +106,7 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                 try:
                     person = await cross_reference(candidate_input)
                 except Exception as e:
+                    session.rollback()
                     item.status = "error"
                     item.error_message = f"Cross-reference failed: {e}"
                     item.completed_at = datetime.utcnow()
@@ -179,6 +180,7 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                         save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq)
                     except Exception as e:
                         logger.warning(f"Analysis failed for repo {repo_url} (item {item_id}): {e}")
+                        session.rollback()  # Clear aborted transaction so the next repo can proceed
                         # Continue with remaining repos even if one fails
 
                 # 10. Update item status
@@ -200,12 +202,14 @@ async def process_single_item(item_id: int, priorities: list[str] = None, use_ge
                     os.remove(temp_path)
                     
         except ResumeParseException as e:
+            session.rollback()
             item.status = "error"
             item.error_message = f"Failed to read resume file: {str(e)}"
             item.completed_at = datetime.utcnow()
             session.commit()
         except Exception as e:
             logger.exception(f"Error processing item {item_id}")
+            session.rollback()
             item.status = "error"
             item.error_message = f"An unexpected error occurred: {str(e)}"
             item.completed_at = datetime.utcnow()
