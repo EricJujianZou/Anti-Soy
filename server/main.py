@@ -81,8 +81,9 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=3,
+    max_overflow=5,
+    connect_args={"options": "-c statement_timeout=60000"},  # 60s query timeout
 )
 
 # Create tables
@@ -399,10 +400,29 @@ async def upload_batch(
             
         session.commit()
         
-        # 5. Kick off background task
+        item_ids = [item.id for item in session.query(BatchItem)
+                    .filter(BatchItem.batch_job_id == batch_id)
+                    .order_by(BatchItem.position)
+                    .all()]
+
+    task_mode = os.getenv("TASK_MODE", "asyncio")
+
+    if task_mode == "cloud_tasks":
+        # Enqueue one Cloud Task per item — distributed processing
+        from v2.task_dispatcher import enqueue_batch
+        enqueued = enqueue_batch(item_ids, batch_id)
+        logger.info(f"Enqueued {enqueued}/{len(item_ids)} Cloud Tasks for batch {batch_id}")
+        # Mark batch as running immediately (Cloud Tasks will drive progress)
+        with Session(engine) as session:
+            batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+            if batch_job:
+                batch_job.status = "running"
+                session.commit()
+    else:
+        # Fallback: asyncio background task (current behavior)
         background_tasks.add_task(process_batch, batch_id, priority_list, generic_questions_flag)
-        
-        return BatchUploadResponse(batch_id=batch_id)
+
+    return BatchUploadResponse(batch_id=batch_id)
 
 
 @app.get("/batch/{batch_id}/status", response_model=BatchStatusResponse)
@@ -653,15 +673,101 @@ def generate_repo_interview_questions(request: Request, repo_id: int):
         return {"interview_questions": questions, "repo_id": repo_id}
 
 
+@app.post("/tasks/process-item")
+async def handle_task_process_item(request: Request):
+    """
+    Cloud Tasks callback endpoint. Processes a single BatchItem.
+
+    Authentication: shared secret in X-Task-Auth header.
+    Cloud Tasks will retry this endpoint (up to 3 times with backoff) if it
+    returns a non-2xx status. Idempotent: if item is already completed, returns 200.
+
+    This endpoint must respond within Cloud Run's request timeout (set to 300s).
+    """
+    # Authenticate the task
+    auth_secret = os.getenv("TASK_AUTH_SECRET", "")
+    task_auth = request.headers.get("X-Task-Auth", "")
+    if not auth_secret or task_auth != auth_secret:
+        # Return 200 to prevent Cloud Tasks from retrying unauthenticated requests
+        # (retrying won't help — the secret won't magically appear)
+        logger.warning("Rejected task request with invalid auth header")
+        return JSONResponse(status_code=200, content={"status": "rejected", "reason": "invalid_auth"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+    item_id = body.get("item_id")
+    batch_id = body.get("batch_id")
+
+    if not item_id or not batch_id:
+        return JSONResponse(status_code=400, content={"error": "item_id and batch_id required"})
+
+    # Check idempotency — if already completed, return 200 immediately
+    with Session(engine) as session:
+        item = session.query(BatchItem).filter(BatchItem.id == item_id).first()
+        if not item:
+            logger.warning(f"Task received for unknown item_id={item_id}")
+            return JSONResponse(status_code=200, content={"status": "not_found"})
+        if item.status == "completed":
+            logger.info(f"Item {item_id} already completed, skipping")
+            return JSONResponse(status_code=200, content={"status": "already_complete"})
+
+    # Process the item
+    from v2.batch_processor import process_single_item
+    from v2.schemas import DEFAULT_PRIORITIES
+    import json as _json
+
+    with Session(engine) as session:
+        batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        priorities = _json.loads(batch_job.priorities) if batch_job and batch_job.priorities else DEFAULT_PRIORITIES
+        use_generic_questions = bool(batch_job.use_generic_questions) if batch_job else False
+
+    await process_single_item(item_id, priorities, use_generic_questions)
+
+    # Check if all items are done — update BatchJob status
+    with Session(engine) as session:
+        batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        if batch_job and batch_job.status != "completed":
+            pending_count = session.query(BatchItem).filter(
+                BatchItem.batch_job_id == batch_id,
+                BatchItem.status.in_(["pending", "running"]),
+            ).count()
+            if pending_count == 0:
+                batch_job.status = "completed"
+                session.commit()
+                logger.info(f"Batch {batch_id} marked completed by task worker")
+
+    return JSONResponse(status_code=200, content={"status": "ok", "item_id": item_id})
+
+
 @app.on_event("startup")
 async def startup_event():
-    with Session(engine) as session:
-        # Find all jobs that aren't completed
-        unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
-        for job in unfinished_jobs:
-            logger.info(f"Resuming batch job {job.id} on startup")
-            priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
-            asyncio.create_task(process_batch(job.id, priorities, job.use_generic_questions))
+    task_mode = os.getenv("TASK_MODE", "asyncio")
+
+    if task_mode == "cloud_tasks":
+        # In Cloud Tasks mode, the queue is durable — tasks survive instance restarts.
+        # Re-enqueue only items that were stuck "running" (orphaned mid-process).
+        from v2.task_dispatcher import enqueue_batch_item
+        with Session(engine) as session:
+            stuck_items = session.query(BatchItem).filter(BatchItem.status == "running").all()
+            for item in stuck_items:
+                logger.info(f"Re-enqueuing stuck item {item.id} in batch {item.batch_job_id}")
+                item.status = "pending"  # Reset so process_single_item picks it up
+                session.commit()
+                try:
+                    enqueue_batch_item(item.id, item.batch_job_id)
+                except Exception as e:
+                    logger.error(f"Failed to re-enqueue item {item.id}: {e}")
+    else:
+        # asyncio mode: resume as before
+        with Session(engine) as session:
+            unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
+            for job in unfinished_jobs:
+                logger.info(f"Resuming batch job {job.id} on startup")
+                priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
+                asyncio.create_task(process_batch(job.id, priorities, job.use_generic_questions))
 
 
 @app.post("/analyze-stream")
