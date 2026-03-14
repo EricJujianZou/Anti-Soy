@@ -208,6 +208,104 @@ class RepoData:
 
 
 # =============================================================================
+# DEPLOYMENT SIGNAL DETECTION
+# =============================================================================
+
+DEPLOY_URL_PATTERN = re.compile(
+    r'https?://[\w.-]+\.(?:vercel\.app|netlify\.app|herokuapp\.com|fly\.dev|'
+    r'onrender\.com|railway\.app|azurewebsites\.net|web\.app|pages\.dev)',
+    re.IGNORECASE,
+)
+
+DEPLOY_HEADER_PATTERN = re.compile(
+    r'#+\s*(?:demo|live|deployed|production|website)\b',
+    re.IGNORECASE,
+)
+
+
+def detect_deployment_signals(repo_data: "RepoData") -> dict:
+    """
+    Detect signals that a project has been deployed to production.
+    Uses already-extracted RepoData — does NOT re-clone.
+
+    Returns:
+        {"shipped_to_prod": bool, "signals": ["Dockerfile found", ...]}
+    """
+    signals: list[str] = []
+    tree_lower = {p.lower() for p in repo_data.tree}
+    tree_set = set(repo_data.tree)
+
+    # --- File presence checks ---
+    if any(p == "dockerfile" or p.endswith("/dockerfile") for p in tree_lower):
+        signals.append("Dockerfile found")
+
+    if any("docker-compose.yml" in p or "docker-compose.yaml" in p for p in tree_lower):
+        signals.append("Docker Compose configuration found")
+
+    if any("k8s/" in p or "kubernetes/" in p or ".k8s/" in p for p in tree_lower):
+        signals.append("Kubernetes manifests found")
+
+    if "vercel.json" in tree_lower:
+        signals.append("Vercel deployment config found")
+
+    if "netlify.toml" in tree_lower:
+        signals.append("Netlify deployment config found")
+
+    if "fly.toml" in tree_lower:
+        signals.append("Fly.io deployment config found")
+
+    if "procfile" in tree_lower:
+        signals.append("Heroku Procfile found")
+
+    if any("appspec.yml" in p for p in tree_lower):
+        signals.append("AWS CodeDeploy config found")
+
+    if any("cloudbuild.yaml" in p or "/app.yaml" in p or p == "app.yaml" for p in tree_lower):
+        signals.append("GCP deployment config found")
+
+    if "render.yaml" in tree_lower:
+        signals.append("Render deployment config found")
+
+    if any("railway.json" in p or "railway.toml" in p for p in tree_lower):
+        signals.append("Railway deployment config found")
+
+    if any("terraform/" in p or "cdk/" in p or "pulumi/" in p for p in tree_lower):
+        signals.append("Infrastructure-as-code directory found")
+
+    # --- GitHub Actions with deploy keywords ---
+    for path in repo_data.tree:
+        path_lower = path.lower()
+        if ".github/workflows/" in path_lower and (path_lower.endswith(".yml") or path_lower.endswith(".yaml")):
+            content = repo_data.files.get(path, "")
+            if not content:
+                # Try case-insensitive lookup
+                for k, v in repo_data.files.items():
+                    if k.lower() == path_lower:
+                        content = v
+                        break
+            if any(kw in content.lower() for kw in ("deploy", "release", "publish", "production")):
+                signals.append("GitHub Actions workflow found")
+                break
+
+    # --- README URL / section checks ---
+    readme_content = ""
+    for path, content in repo_data.files.items():
+        if path.lower().startswith("readme"):
+            readme_content = content
+            break
+
+    if readme_content:
+        if DEPLOY_URL_PATTERN.search(readme_content):
+            signals.append("Live deployment URL found in README")
+        if DEPLOY_HEADER_PATTERN.search(readme_content):
+            # Make sure there's an actual URL near the header
+            if "http" in readme_content.lower():
+                signals.append("Live demo section found in README")
+
+    return {"shipped_to_prod": len(signals) > 0, "signals": signals}
+
+
+# =============================================================================
 # MAIN EXTRACTION FUNCTION
 # =============================================================================
 

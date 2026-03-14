@@ -8,6 +8,29 @@ import { cn } from "@/utils/utils";
 import { Loader2, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
 import type { BatchItemStatus, BatchVerdict } from "@/services/batchApi";
 
+const ScoreRangeBadge = ({ score }: { score: number }) => {
+  let label: string;
+  let colorClass: string;
+  if (score >= 80) {
+    label = "Strong";
+    colorClass = "bg-green-500/10 text-green-500 border-green-500/20";
+  } else if (score >= 60) {
+    label = "Moderate";
+    colorClass = "bg-blue-500/10 text-blue-500 border-blue-500/20";
+  } else if (score >= 40) {
+    label = "Developing";
+    colorClass = "bg-amber-500/10 text-amber-500 border-amber-500/20";
+  } else {
+    label = "Concerning";
+    colorClass = "bg-destructive/10 text-destructive border-destructive/20";
+  }
+  return (
+    <Badge variant="outline" className={cn("uppercase tracking-widest text-[10px] font-bold px-2 py-0.5", colorClass)}>
+      {label}
+    </Badge>
+  );
+};
+
 const VerdictBadge = ({ verdict }: { verdict: BatchVerdict | string | null | undefined }) => {
   if (!verdict) return null;
 
@@ -83,7 +106,10 @@ const CandidateCard = ({ item, batchId, batchPriorities }: { item: BatchItemStat
             </span>
           </div>
           
-          {isCompleted && <VerdictBadge verdict={item.verdict} />}
+          {isCompleted && item.overall_score != null && (
+            <ScoreRangeBadge score={item.overall_score} />
+          )}
+          {isCompleted && item.overall_score == null && <VerdictBadge verdict={item.verdict} />}
           {isError && <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 uppercase tracking-widest text-[10px] font-bold">Unresolvable</Badge>}
         </div>
 

@@ -198,6 +198,40 @@ VALID_PRIORITIES = {"code_quality", "security", "originality", "production_readi
 DEFAULT_PRIORITIES = list(VALID_PRIORITIES)
 
 
+# =============================================================================
+# DYNAMIC SCORING CONFIG
+# =============================================================================
+
+class ScoringWeights(BaseModel):
+    """Slider weights for the 4 scoring dimensions (0.0 = lenient, 1.0 = strict)."""
+    ai_detection: float = Field(default=0.7, ge=0.0, le=1.0)
+    security: float = Field(default=0.5, ge=0.0, le=1.0)
+    code_quality: float = Field(default=0.5, ge=0.0, le=1.0)
+    originality: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class RequiredTech(BaseModel):
+    """Required tech stack for candidate matching."""
+    languages: list[str] = Field(default_factory=list, max_length=5)
+    tools: list[str] = Field(default_factory=list, max_length=5)
+
+
+class ScoringConfig(BaseModel):
+    """Full scoring configuration submitted by the recruiter at batch upload time."""
+    weights: ScoringWeights = Field(default_factory=ScoringWeights)
+    shipped_to_prod_bonus: bool = Field(default=True)
+    required_tech: RequiredTech = Field(default_factory=RequiredTech)
+
+
+class TechStackLanguage(BaseModel):
+    """Per-language aggregation across a candidate's repos."""
+    language: str
+    total_projects: int
+    hand_coded: int = Field(description="Repos where ai_slop_score < 60")
+    vibe_coded: int = Field(description="Repos where ai_slop_score >= 60")
+    project_names: list[str]
+
+
 class AnalyzeRequest(BaseModel):
     """Request body for POST /analyze endpoint"""
     repo_url: str = Field(..., description="Full GitHub URL to analyze (e.g., https://github.com/user/repo)")
@@ -322,9 +356,10 @@ class CandidateDetailResponse(BaseModel):
     item_id: int
     candidate_name: str
     github_profile_url: str | None
-    overall_score: int  # average across all repos
+    overall_score: int  # weighted average across all repos
     repos: list[CandidateRepoDetail]
     interview_questions: list[InterviewQuestion] | None = None  # None = not yet generated
+    tech_stack_breakdown: list[TechStackLanguage] | None = None
 
 
 # =============================================================================

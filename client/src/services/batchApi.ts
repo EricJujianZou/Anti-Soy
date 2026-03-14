@@ -1,6 +1,6 @@
 const rawBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const API_BASE_URL = rawBaseUrl.replace(/\/+$/, "");
-import type { PriorityKey, AnalysisResponse, EvaluateResponse, InterviewQuestion } from "./api";
+import type { PriorityKey, ScoringConfig, AnalysisResponse, EvaluateResponse, InterviewQuestion } from "./api";
 
 export interface BatchVerdict {
   type: string;
@@ -30,13 +30,22 @@ export interface BatchStatusResponse {
   priorities?: PriorityKey[];
 }
 
-export async function uploadBatch(files: File[], priorities?: PriorityKey[], useGenericQuestions?: boolean): Promise<{ batch_id: string }> {
+export async function uploadBatch(
+  files: File[],
+  scoringConfig?: ScoringConfig,
+  useGenericQuestions?: boolean,
+  // Legacy param — kept for backward compat but ignored when scoringConfig is provided
+  priorities?: PriorityKey[],
+): Promise<{ batch_id: string }> {
   const formData = new FormData();
   files.forEach((file) => {
     formData.append("resumes", file);
   });
 
-  if (priorities && priorities.length > 0) {
+  if (scoringConfig) {
+    formData.append("scoring_config", JSON.stringify(scoringConfig));
+  } else if (priorities && priorities.length > 0) {
+    // Legacy fallback
     formData.append("priorities", JSON.stringify(priorities));
   }
 
@@ -85,6 +94,14 @@ export interface CandidateRepoDetail {
   evaluation: EvaluateResponse;
 }
 
+export interface TechStackLanguage {
+  language: string;
+  total_projects: number;
+  hand_coded: number;   // repos where ai_slop_score < 60
+  vibe_coded: number;   // repos where ai_slop_score >= 60
+  project_names: string[];
+}
+
 export interface CandidateDetailResponse {
   item_id: number;
   candidate_name: string;
@@ -92,6 +109,7 @@ export interface CandidateDetailResponse {
   overall_score: number;
   repos: CandidateRepoDetail[];
   interview_questions: InterviewQuestion[] | null;  // null = not yet generated
+  tech_stack_breakdown?: TechStackLanguage[] | null;
 }
 
 export async function getCandidateDetail(

@@ -14,8 +14,14 @@ from sqlalchemy import create_engine
 from models import BatchJob, BatchItem, BatchItemRepo, Repo, User
 from v2.resume_parser import GeneralExtractor, ExtractCandidateInfo, ResumeParseException
 from v2.cross_reference import cross_reference, CandidateInput
-from v2.analysis_service import run_analysis_pipeline, save_analysis_results, run_evaluation_pipeline, save_evaluation_results
-from v2.schemas import DEFAULT_PRIORITIES
+from v2.analysis_service import (
+    run_analysis_pipeline, save_analysis_results,
+    run_evaluation_pipeline, save_evaluation_results,
+    compute_composite_score, compute_tech_match_penalty,
+    aggregate_tech_stack,
+)
+from v2.data_extractor import detect_deployment_signals
+from v2.schemas import DEFAULT_PRIORITIES, ScoringConfig
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,7 @@ BATCH_ITEM_CONCURRENCY = int(os.getenv("BATCH_ITEM_CONCURRENCY", "4"))
 async def process_batch(batch_id: str, priorities: Optional[list[str]] = None, use_generic_questions: bool = False):
     """
     Background task to process a batch of resumes.
+    scoring_config is read from the BatchJob record — not passed as an arg to avoid serialization issues.
     """
     logger.info(f"Starting batch processing for {batch_id}")
 
@@ -52,7 +59,7 @@ async def process_batch(batch_id: str, priorities: Optional[list[str]] = None, u
 
         async def _run_item(item_id: int):
             async with semaphore:
-                await process_single_item(item_id, priorities, use_generic_questions)
+                await process_single_item(item_id, batch_id, priorities, use_generic_questions)
 
         results = await asyncio.gather(*[_run_item(item_id) for item_id in item_ids], return_exceptions=True)
         for item_id, result in zip(item_ids, results):
@@ -65,15 +72,26 @@ async def process_batch(batch_id: str, priorities: Optional[list[str]] = None, u
         session.commit()
         logger.info(f"Completed batch processing for {batch_id}")
 
-async def process_single_item(item_id: int, priorities: Optional[list[str]] = None, use_generic_questions: bool = False):
+async def process_single_item(item_id: int, batch_id: str, priorities: Optional[list[str]] = None, use_generic_questions: bool = False):
     """
     Processes a single resume item.
+    scoring_config is read from the BatchJob within this session.
     """
+    import json as _json
     # Create a new session for this item to ensure thread safety/isolation
     with Session(engine) as session:
         item = session.query(BatchItem).filter(BatchItem.id == item_id).first()
         if not item:
             return
+
+        # Load scoring_config from BatchJob; fall back to defaults if not present
+        batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        scoring_config_dict = ScoringConfig().model_dump()
+        if batch_job and batch_job.scoring_config:
+            try:
+                scoring_config_dict = _json.loads(batch_job.scoring_config)
+            except Exception:
+                pass  # keep defaults
             
         item.status = "running"
         session.commit()
@@ -188,11 +206,48 @@ async def process_single_item(item_id: int, priorities: Optional[list[str]] = No
                         extracted_data, ai_slop, bad_practices, code_quality, verdict = run_analysis_pipeline(repo_url)
                         save_analysis_results(session, repo.id, extracted_data, ai_slop, bad_practices, code_quality, verdict)
 
+                        # Detect deployment signals from already-extracted data (no re-clone)
+                        deployment = detect_deployment_signals(extracted_data)
+
                         bv, sf, ir, rr, iq = run_evaluation_pipeline(
                             repo_url, repo_name, ai_slop, bad_practices, code_quality, extracted_data, effective_priorities,
                             skip_questions=True,  # questions are generated on-demand per batch item
                         )
                         save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq)
+
+                        # Compute tech match penalty for this repo
+                        required_tech = scoring_config_dict.get("required_tech", {})
+                        tech_penalty = compute_tech_match_penalty(
+                            repo_languages=extracted_data.languages or {},
+                            repo_dependencies=extracted_data.dependencies or [],
+                            ai_slop_score=ai_slop.score,
+                            required_tech=required_tech,
+                        )
+
+                        # Compute composite score for this repo (stored for candidate aggregation below)
+                        import json as _json2
+                        bad_practices_findings = []
+                        try:
+                            bp_data = _json2.loads(bad_practices.model_dump_json())
+                            bad_practices_findings = bp_data.get("findings", [])
+                        except Exception:
+                            pass
+
+                        originality_score = 0.5
+                        if bv and isinstance(bv, dict):
+                            originality_score = bv.get("originality_score", 0.5)
+
+                        repo_composite = compute_composite_score(
+                            ai_slop_score=ai_slop.score,
+                            bad_practices_score=bad_practices.score,
+                            code_quality_score=code_quality.score,
+                            originality_score=originality_score,
+                            bad_practices_findings=bad_practices_findings,
+                            scoring_config=scoring_config_dict,
+                            shipped_to_prod=deployment.get("shipped_to_prod", False),
+                            tech_match_penalty=tech_penalty,
+                        )
+                        logger.debug(f"Repo {repo_name}: composite_score={repo_composite}, shipped_to_prod={deployment.get('shipped_to_prod')}")
                     except Exception as e:
                         logger.warning(f"Analysis failed for repo {repo_url} (item {item_id}): {e}")
                         session.rollback()  # Clear aborted transaction so the next repo can proceed

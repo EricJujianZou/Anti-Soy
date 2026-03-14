@@ -122,6 +122,8 @@ export interface EvaluateResponse {
 
 export type PriorityKey = "code_quality" | "security" | "originality" | "production_readiness" | "ai_detection";
 
+// LEGACY: used only by the single-repo /analyze-stream flow on the Index page.
+// Do NOT use for batch uploads — use ScoringConfig instead.
 export const PRIORITY_OPTIONS: { key: PriorityKey; label: string }[] = [
   { key: "code_quality", label: "Code Quality" },
   { key: "security", label: "Security" },
@@ -129,6 +131,40 @@ export const PRIORITY_OPTIONS: { key: PriorityKey; label: string }[] = [
   { key: "production_readiness", label: "Production Readiness" },
   { key: "ai_detection", label: "AI Detection" },
 ];
+
+// =============================================================================
+// DYNAMIC SCORING CONFIG TYPES
+// =============================================================================
+
+export interface ScoringWeights {
+  ai_detection: number;   // 0.0 - 1.0
+  security: number;       // 0.0 - 1.0
+  code_quality: number;   // 0.0 - 1.0
+  originality: number;    // 0.0 - 1.0
+}
+
+export interface ScoringConfig {
+  weights: ScoringWeights;
+  shipped_to_prod_bonus: boolean;
+  required_tech: {
+    languages: string[];
+    tools: string[];
+  };
+}
+
+export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
+  weights: {
+    ai_detection: 0.7,
+    security: 0.5,
+    code_quality: 0.5,
+    originality: 0.5,
+  },
+  shipped_to_prod_bonus: true,
+  required_tech: {
+    languages: [],
+    tools: [],
+  },
+};
 
 
 // =============================================================================

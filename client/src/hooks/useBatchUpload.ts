@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { uploadBatch } from "@/services/batchApi";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import type { PriorityKey } from "@/services/api";
+import type { ScoringConfig } from "@/services/api";
 
 export const useBatchUpload = () => {
   const [files, setFiles] = useState<File[]>([]);
@@ -12,12 +12,12 @@ export const useBatchUpload = () => {
 
   const addFiles = useCallback((newFiles: File[]) => {
     const validFiles = newFiles.filter((file) => {
-      const isValidType = 
-        file.type === "application/pdf" || 
+      const isValidType =
+        file.type === "application/pdf" ||
         file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
         file.name.endsWith(".pdf") ||
         file.name.endsWith(".docx");
-      
+
       if (!isValidType) {
         toast({
           title: "Invalid file type",
@@ -46,14 +46,14 @@ export const useBatchUpload = () => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const handleUpload = async (priorities: PriorityKey[], useGenericQuestions?: boolean) => {
+  const handleUpload = async (scoringConfig: ScoringConfig, useGenericQuestions?: boolean) => {
     if (files.length === 0) return;
 
     setIsUploading(true);
     try {
-      const { batch_id } = await uploadBatch(files, priorities, useGenericQuestions);
+      const { batch_id } = await uploadBatch(files, scoringConfig, useGenericQuestions);
       localStorage.setItem("antisoy_batch_id", batch_id);
-      localStorage.setItem(`antisoy_batch_${batch_id}_priorities`, JSON.stringify(priorities));
+      localStorage.setItem(`antisoy_batch_${batch_id}_scoring_config`, JSON.stringify(scoringConfig));
       navigate(`/dashboard/${batch_id}`, { replace: true });
     } catch (error) {
       toast({
