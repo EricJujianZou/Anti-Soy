@@ -78,6 +78,23 @@ EMOJI_PATTERN = re.compile(
 # Bonus points for emoji detection (deterministic, not ML-based)
 EMOJI_BONUS = 15  # +15 to AI score if ANY emoji found in code
 
+# Context classification patterns for emoji false-positive filtering
+# JSX/HTML tag pattern - matches opening or closing tags
+JSX_HTML_PATTERN = re.compile(r'<\w+[\s>/]|</\w+>')
+
+# String literal pattern - matches quoted strings (double, single, backtick)
+# Used to check if an emoji falls inside a string region
+STRING_REGION_PATTERN = re.compile(r'''("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)''')
+
+# Print/log patterns by language group
+PYTHON_PRINT_PATTERNS = ('print(', 'logging.', 'logger.', 'log.')
+JS_PRINT_PATTERNS = ('console.log(', 'console.warn(', 'console.error(', 'console.info(', 'console.debug(')
+GO_PRINT_PATTERNS = ('fmt.Print', 'fmt.Println', 'fmt.Printf', 'fmt.Sprint', 'fmt.Sprintf',
+                     'log.Print', 'log.Println', 'log.Printf', 'log.Fatal', 'log.Fatalf')
+CSHARP_PRINT_PATTERNS = ('Console.Write', 'Console.WriteLine', 'Debug.Log', 'Trace.Write')
+JAVA_PRINT_PATTERNS = ('System.out.print', 'System.err.print', 'logger.', 'log.')
+GENERIC_PRINT_PATTERNS = ('print(', 'log(', 'warn(', 'error(')
+
 # AI instruction files (positive signal - indicates disciplined AI use)
 AI_INSTRUCTION_FILES = [
     ".cursorrules",
@@ -215,6 +232,140 @@ JS_REDUNDANT_COMMENT_PATTERNS = [
 
 
 # =============================================================================
+# EMOJI CONTEXT CLASSIFICATION HELPERS
+# =============================================================================
+
+def classify_emoji_context(line: str, file_path: str, in_block_comment: bool) -> str:
+    """
+    Classify the context of an emoji on a given line.
+
+    Args:
+        line: The full line of source code containing the emoji.
+        file_path: The file path (used to determine language from extension).
+        in_block_comment: Whether this line is inside a multi-line block comment (/* ... */).
+
+    Returns:
+        One of: "comment", "print_log", "display", "code"
+    """
+    stripped = line.lstrip()
+
+    # Priority 1: Block comment (all languages except Python/shell)
+    if in_block_comment:
+        return "comment"
+
+    # Priority 2: Line comment detection (language-aware)
+    if file_path.endswith('.py'):
+        # Python: line comment or inline comment via #
+        if stripped.startswith('#'):
+            return "comment"
+        # Python docstrings treated as comment context
+        if stripped.startswith('"""') or stripped.startswith("'''"):
+            return "comment"
+        # Inline comment: find first # not inside a string
+        _inline_stripped = _strip_strings(line)
+        if '#' in _inline_stripped:
+            return "comment"
+
+    elif file_path.endswith(('.sh', '.bash')):
+        if stripped.startswith('#'):
+            return "comment"
+
+    elif file_path.endswith(('.js', '.ts', '.jsx', '.tsx', '.go', '.cs',
+                              '.java', '.c', '.cpp', '.h', '.hpp', '.rs',
+                              '.swift', '.kt', '.scala', '.php')):
+        if stripped.startswith('//') or stripped.startswith('/*'):
+            return "comment"
+        # Inline // comment: find first // not inside a string
+        _inline_stripped = _strip_strings(line)
+        if '//' in _inline_stripped:
+            return "comment"
+
+    # Priority 3: Print/log statement (language-aware)
+    if file_path.endswith('.py'):
+        if any(pat in line for pat in PYTHON_PRINT_PATTERNS):
+            return "print_log"
+    elif file_path.endswith(('.js', '.ts', '.jsx', '.tsx')):
+        if any(pat in line for pat in JS_PRINT_PATTERNS):
+            return "print_log"
+    elif file_path.endswith('.go'):
+        if any(pat in line for pat in GO_PRINT_PATTERNS):
+            return "print_log"
+    elif file_path.endswith('.cs'):
+        if any(pat in line for pat in CSHARP_PRINT_PATTERNS):
+            return "print_log"
+    elif file_path.endswith('.java'):
+        if any(pat in line for pat in JAVA_PRINT_PATTERNS):
+            return "print_log"
+    # Generic fallback print/log (applied to all languages)
+    if any(pat in line for pat in GENERIC_PRINT_PATTERNS):
+        return "print_log"
+
+    # Priority 4: JSX/HTML display context
+    if file_path.endswith(('.jsx', '.tsx', '.vue', '.svelte')):
+        if JSX_HTML_PATTERN.search(line):
+            return "display"
+
+    # Priority 5: Emoji inside a string literal (not comment/print)
+    string_spans = [(m.start(), m.end()) for m in STRING_REGION_PATTERN.finditer(line)]
+    if string_spans:
+        # Find emoji positions on this line
+        emoji_positions = [m.start() for m in EMOJI_PATTERN.finditer(line)]
+        if not emoji_positions:
+            # Fall back to checking common emojis
+            for emoji in COMMON_EMOJIS:
+                pos = line.find(emoji)
+                if pos != -1:
+                    emoji_positions.append(pos)
+        if emoji_positions and all(
+            any(start <= pos < end for start, end in string_spans)
+            for pos in emoji_positions
+        ):
+            return "display"
+
+    # Priority 6: Default fallback — don't flag (conservative)
+    return "code"
+
+
+def _strip_strings(line: str) -> str:
+    """
+    Replace string literal contents with spaces, leaving the rest of the line intact.
+    Used to find comment markers that are not inside strings.
+    """
+    result = list(line)
+    for m in STRING_REGION_PATTERN.finditer(line):
+        for i in range(m.start() + 1, m.end() - 1):
+            result[i] = ' '
+    return ''.join(result)
+
+
+def _update_block_comment_state(line: str, in_block_comment: bool) -> bool:
+    """
+    Update block comment tracking state for /* ... */ style comments.
+
+    Args:
+        line: Current line of source code.
+        in_block_comment: Whether we were inside a block comment before this line.
+
+    Returns:
+        Whether we are inside a block comment after processing this line.
+    """
+    if in_block_comment:
+        # Look for closing */
+        if '*/' in line:
+            return False
+        return True
+    else:
+        # Look for opening /*
+        if '/*' in line:
+            # Check if it also closes on the same line (single-line block comment)
+            open_pos = line.index('/*')
+            close_pos = line.find('*/', open_pos + 2)
+            if close_pos == -1:
+                return True  # Block comment continues on next line
+        return False
+
+
+# =============================================================================
 # ANALYZER CLASS
 # =============================================================================
 
@@ -233,7 +384,7 @@ class EmojiFinding:
     file_path: str
     line_number: int
     emoji: str
-    context: str  # "comment", "print", or "commit"
+    context: str  # "comment", "print_log", "display", "code", or "commit"
     snippet: str
 
 
@@ -271,7 +422,7 @@ class AISlopAnalyzer:
         redundant_findings = self._detect_redundant_comments(repo_data)
         
         # 3. Detect emojis in code (comments, prints, commit messages)
-        emoji_findings = self._detect_emojis(repo_data)
+        emoji_findings, display_emoji_findings = self._detect_emojis(repo_data)
         
         # 4. Detect positive signals
         positive_signals = self._detect_positive_signals(repo_data)
@@ -288,7 +439,7 @@ class AISlopAnalyzer:
         style_features = self._build_style_features(features, len(redundant_findings))
         
         # 7. Convert findings to Finding objects
-        negative_signals = self._convert_to_findings(redundant_findings, emoji_findings)
+        negative_signals = self._convert_to_findings(redundant_findings, emoji_findings, display_emoji_findings)
         
         return AISlop(
             score=score,
@@ -353,60 +504,73 @@ class AISlopAnalyzer:
         
         return findings
     
-    def _detect_emojis(self, repo_data: RepoData) -> list[EmojiFinding]:
+    def _detect_emojis(self, repo_data: RepoData) -> tuple[list[EmojiFinding], list[EmojiFinding]]:
         """
         Detect emojis in code comments, print statements, and commit messages.
-        
-        Emojis in code are a strong signal of unvetted AI-generated content.
-        Real developers don't put 🔥 and 🚀 in their comments.
-        
+
         Returns:
-            List of EmojiFinding with file, line, emoji, context, snippet
+            Tuple of (flagged_findings, display_findings).
+            - flagged_findings: emojis in comments/print/logs/commits (affect score)
+            - display_findings: emojis in display/UI context (informational, don't affect score)
         """
         findings: list[EmojiFinding] = []
-        
+        display_findings: list[EmojiFinding] = []
+
         # 1. Check code files for emojis in comments and print statements
         for file_path, content in repo_data.files.items():
             if not is_code_file(file_path):
                 continue
-            
+
             lines = content.split('\n')
+            in_block_comment = False
+            uses_block_comments = not file_path.endswith(('.py', '.sh', '.bash'))
+
             for line_num, line in enumerate(lines, 1):
+                # Update block comment state for languages that use /* */
+                if uses_block_comments:
+                    in_block_comment = _update_block_comment_state(line, in_block_comment)
+
                 # Check for emojis using our pattern
                 emojis_found = EMOJI_PATTERN.findall(line)
                 if not emojis_found:
                     # Also check for common emojis in our set (some might not match regex)
                     emojis_found = [e for e in COMMON_EMOJIS if e in line]
-                
+
                 if emojis_found:
-                    # Determine context (comment or print)
-                    stripped = line.strip()
-                    if stripped.startswith('#') or stripped.startswith('//') or stripped.startswith('/*'):
-                        context = "comment"
-                    elif 'print' in line.lower() or 'console.log' in line.lower() or 'logger' in line.lower():
-                        context = "print/log"
-                    else:
-                        context = "code"
-                    
+                    # Classify context using the new helper
+                    context = classify_emoji_context(line, file_path, in_block_comment)
+
                     # Build snippet (current line + 2 lines after for context)
                     snippet_start = line_num - 1
                     snippet_end = min(len(lines), line_num + 2)
                     snippet = '\n'.join(lines[snippet_start:snippet_end])
-                    
-                    findings.append(EmojiFinding(
-                        file_path=file_path,
-                        line_number=line_num,
-                        emoji=emojis_found[0],  # Store first emoji found
-                        context=context,
-                        snippet=snippet[:300] if len(snippet) > 300 else snippet,
-                    ))
-        
-        # 2. Check commit messages for emojis
+                    snippet = snippet[:300] if len(snippet) > 300 else snippet
+
+                    if context in ("comment", "print_log"):
+                        # Flagged: adds to score
+                        findings.append(EmojiFinding(
+                            file_path=file_path,
+                            line_number=line_num,
+                            emoji=emojis_found[0],
+                            context=context,
+                            snippet=snippet,
+                        ))
+                    else:
+                        # Not flagged: informational only
+                        display_findings.append(EmojiFinding(
+                            file_path=file_path,
+                            line_number=line_num,
+                            emoji=emojis_found[0],
+                            context=context,
+                            snippet=snippet,
+                        ))
+
+        # 2. Check commit messages for emojis (always flagged, no changes here)
         for commit in repo_data.commits:
             emojis_found = EMOJI_PATTERN.findall(commit.message)
             if not emojis_found:
                 emojis_found = [e for e in COMMON_EMOJIS if e in commit.message]
-            
+
             if emojis_found:
                 findings.append(EmojiFinding(
                     file_path="[commit]",
@@ -415,8 +579,8 @@ class AISlopAnalyzer:
                     context="commit",
                     snippet=f"{commit.hash[:7]}: {commit.message[:100]}",
                 ))
-        
-        return findings
+
+        return findings, display_findings
     
     def _detect_positive_signals(self, repo_data: RepoData) -> list[PositiveSignal]:
         """
@@ -579,6 +743,7 @@ class AISlopAnalyzer:
         self,
         redundant_findings: list[RedundantCommentFinding],
         emoji_findings: list[EmojiFinding],
+        display_emoji_findings: list[EmojiFinding] | None = None,
     ) -> list[Finding]:
         """
         Convert internal findings to schema Finding objects.
@@ -647,7 +812,22 @@ class AISlopAnalyzer:
                 snippet=snippet,
                 explanation=f"Emojis found in code: {emoji_display}. Distribution: {context_summary}. Total: {len(emoji_findings)} occurrences. Real developers don't put 🔥 and 🚀 in production code.",
             ))
-        
+
+        # 3. Handle display emojis (informational, not scored)
+        if display_emoji_findings:
+            count = len(display_emoji_findings)
+            unique_display_emojis = set(f.emoji for f in display_emoji_findings)
+            emoji_display = ' '.join(sorted(unique_display_emojis)[:10])
+
+            findings.append(Finding(
+                type="emoji_in_display",
+                severity=Severity.INFO,
+                file="Multiple locations" if count > 1 else display_emoji_findings[0].file_path,
+                line=display_emoji_findings[0].line_number,
+                snippet=f"{count} emoji(s) found in display/UI context (not flagged)",
+                explanation=f"Emojis found in UI/display context: {emoji_display}. These appear in JSX/HTML content or string literals and are not counted as AI signals.",
+            ))
+
         return findings
 
 
