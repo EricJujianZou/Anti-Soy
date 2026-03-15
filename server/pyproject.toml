@@ -19,4 +19,5 @@ dependencies = [
     "slowapi>=0.1.9",
     "sqlalchemy>=2.0.45",
     "psycopg2-binary>=2.9.9",
+    "google-cloud-tasks>=2.16.0",
 ]

@@ -9,6 +9,7 @@
       "Bash(cd \"C:/Users/zouju/Coding Projects/dynamic-scoring/client\" && ./node_modules/.bin/tsc --noEmit 2>&1 | head -50)",
       "Bash(cd \"C:/Users/zouju/Coding Projects/dynamic-scoring/client\" && node_modules/.bin/tsc.cmd --noEmit 2>&1 | head -50)",
       "Bash(find \"C:/Users/zouju/Coding Projects/dynamic-scoring/client/node_modules/.bin\" -name \"tsc*\" 2>/dev/null | head -5)"
+      "Bash(cd \"C:\\\\Users\\\\zouju\\\\Coding Projects\\\\scaling\\\\server\" && uv add \"google-cloud-tasks>=2.16.0\" 2>&1)"
     ]
   }
 }
