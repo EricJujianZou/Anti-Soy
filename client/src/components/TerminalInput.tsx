@@ -73,29 +73,28 @@ export const TerminalInput = ({
       {(secondaryAction || onSecondaryAction) && (
         <div className="mb-6">
           {onSecondaryAction ? (
-            <button
-              type="button"
-              onClick={() => onSecondaryAction(prioritiesArray())}
-              className={cn(
-                "w-full border-2 border-primary/70 bg-primary/5 backdrop-blur-sm",
-                "py-5 px-6 text-center",
-                "uppercase tracking-widest text-sm font-bold text-primary",
-                "transition-all duration-300",
-                "hover:bg-primary/15 hover:border-primary hover:glow-amber",
-                "relative group"
-              )}
-            >
-              <span className="absolute -top-px -left-px text-primary text-sm">┌</span>
-              <span className="absolute -top-px -right-px text-primary text-sm">┐</span>
-              <span className="absolute -bottom-px -left-px text-primary text-sm">└</span>
-              <span className="absolute -bottom-px -right-px text-primary text-sm">┘</span>
-              <span className="flex items-center justify-center gap-2">
-                Upload Candidate Resumes
-              </span>
-              <span className="block text-[10px] text-muted-foreground font-normal mt-1 tracking-wider normal-case">
+            <div className="flex flex-col items-center">
+              <button
+                type="button"
+                onClick={() => onSecondaryAction(prioritiesArray())}
+                className={cn(
+                  "border border-primary bg-primary/10 text-primary py-2.5 px-8",
+                  "uppercase tracking-widest text-xs font-medium",
+                  "transition-all duration-300",
+                  "hover:bg-primary hover:text-primary-foreground",
+                  "relative group"
+                )}
+              >
+                <span className="absolute -top-px -left-px text-primary group-hover:text-primary-foreground text-xs">┌</span>
+                <span className="absolute -top-px -right-px text-primary group-hover:text-primary-foreground text-xs">┐</span>
+                <span className="absolute -bottom-px -left-px text-primary group-hover:text-primary-foreground text-xs">└</span>
+                <span className="absolute -bottom-px -right-px text-primary group-hover:text-primary-foreground text-xs">┘</span>
+                [ upload candidate resumes ]
+              </button>
+              <p className="text-[10px] text-muted-foreground mt-1.5 tracking-wider">
                 Batch analyze up to 10 resumes at once
-              </span>
-            </button>
+              </p>
+            </div>
           ) : (
             secondaryAction
           )}

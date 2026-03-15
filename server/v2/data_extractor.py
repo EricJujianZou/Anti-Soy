@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 # File size limits
 MAX_FILE_SIZE = 200 * 1024  # 200KB per file
-MAX_TOTAL_CONTENT = 2 * 1024 * 1024  # 2MB total content
+MAX_TOTAL_CONTENT = 5 * 1024 * 1024  # 5MB total content
+FILE_TARGET_MIN = 15        # Always read at least 15 files
+FILE_TARGET_PERCENTAGE = 0.15  # Read up to 15% of total code files
+FILE_TARGET_MAX = 50        # Never read more than 50 files
 
 # Code file extensions we care about
 CODE_EXTENSIONS = (
@@ -392,24 +395,32 @@ def extract_repo_data(repo_path: str | Path) -> RepoData:
     # PASS 3: Read content in importance order until limit
     # ==========================================================================
     total_content_size = 0
-    
+    files_read = 0
+    file_target = min(FILE_TARGET_MAX, max(FILE_TARGET_MIN, int(len(all_files) * FILE_TARGET_PERCENTAGE)))
+
     for file_info in all_files:
+        # Stop if we've hit the adaptive file count target
+        if files_read >= file_target:
+            break
+
+        # Skip if this file would exceed the hard content cap
         if total_content_size + file_info.size > MAX_TOTAL_CONTENT:
             continue  # Skip this file, but keep trying smaller ones
-        
+
         try:
             content = file_info.abs_path.read_text(encoding="utf-8", errors="ignore")
             result.files[file_info.rel_path] = content
             result.file_importance[file_info.rel_path] = file_info.importance_score
             total_content_size += len(content)
-            
+            files_read += 1
+
             # Track language bytes
             suffix = file_info.abs_path.suffix.lower()
             if suffix in CODE_EXTENSIONS:
                 lang = EXTENSION_TO_LANGUAGE.get(suffix)
                 if lang:
                     result.languages[lang] = result.languages.get(lang, 0) + file_info.size
-                    
+
         except (OSError, IOError):
             continue
     
@@ -466,6 +477,66 @@ def _calculate_file_importance(rel_path: str, file_size: int) -> int:
     if any(d in path_parts for d in core_dirs):
         score += 15
     
+    # -----------------------------------------------------------------
+    # FRAMEWORK-AWARE HEURISTICS (additive bonuses)
+    # -----------------------------------------------------------------
+
+    # Next.js pages and app directory
+    if (path_lower.startswith("pages/") or path_lower.startswith("app/")) and \
+       filename.endswith((".tsx", ".ts", ".jsx", ".js")):
+        score += 20
+
+    # Express/Node routes
+    if (path_lower.startswith("routes/") or path_lower.startswith("router/") or
+        "/routes/" in path_lower or "/router/" in path_lower) and \
+       filename.endswith((".js", ".ts")):
+        score += 20
+
+    # Django / Flask important files
+    django_flask_files = {"views.py", "urls.py", "serializers.py"}
+    if filename in django_flask_files:
+        score += 20
+
+    # FastAPI routers and endpoints
+    if ("/routers/" in path_lower or path_lower.startswith("routers/") or
+        "/endpoints/" in path_lower or path_lower.startswith("endpoints/")) and \
+       filename.endswith(".py"):
+        score += 20
+
+    # Spring Java
+    spring_suffixes = ("controller.java", "service.java", "repository.java")
+    if filename.endswith(spring_suffixes):
+        score += 20
+
+    # .NET Controllers
+    if filename.endswith("controller.cs"):
+        score += 20
+
+    # Go entry points and handlers
+    if (path_lower.startswith("cmd/") or "/cmd/" in path_lower) and filename.endswith(".go"):
+        score += 15
+    if (path_lower.startswith("internal/") or "/internal/" in path_lower) and filename.endswith(".go"):
+        score += 15
+    if filename.startswith("handler") and filename.endswith(".go"):
+        score += 15
+
+    # Rust crate entry points
+    rust_entry = {"main.rs", "lib.rs"}
+    if filename in rust_entry and "src/" in path_lower:
+        score += 20
+    if path_lower.startswith("src/bin/") and filename.endswith(".rs"):
+        score += 20
+
+    # GraphQL
+    if filename.endswith(".graphql"):
+        score += 15
+    if "/resolvers/" in path_lower or path_lower.startswith("resolvers/"):
+        score += 15
+
+    # Database schema
+    if filename == "schema.sql":
+        score += 10
+
     # Backend/server code (often more complex logic)
     if "server" in path_parts or "backend" in path_parts or "api" in path_parts:
         score += 10
