@@ -1,11 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useBatchStatus } from "@/hooks/useBatchStatus";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/utils/utils";
-import { Loader2, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, ExternalLink, Copy, Check } from "lucide-react";
 import type { BatchItemStatus, BatchVerdict } from "@/services/batchApi";
 
 const VerdictBadge = ({ verdict }: { verdict: BatchVerdict | string | null | undefined }) => {
@@ -129,6 +129,32 @@ const CandidateCard = ({ item, batchId, batchPriorities }: { item: BatchItemStat
   );
 };
 
+const BackgroundBanner = () => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-primary/20 bg-primary/5 rounded px-4 py-3">
+      <p className="text-xs text-muted-foreground">
+        <span className="text-primary font-bold">Processing in background</span> — this may take 1–2 hours for large batches.
+        You can close this tab and come back.
+      </p>
+      <button
+        onClick={handleCopy}
+        className="flex items-center gap-1.5 shrink-0 text-xs font-bold uppercase tracking-widest text-primary border border-primary/30 px-3 py-1.5 rounded hover:bg-primary/10 transition-colors"
+      >
+        {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+        {copied ? "Copied" : "Copy URL"}
+      </button>
+    </div>
+  );
+};
+
 const BatchDashboard = () => {
   const { batchId } = useParams<{ batchId: string }>();
   const { data, isLoading, error } = useBatchStatus(batchId || "");
@@ -201,10 +227,12 @@ const BatchDashboard = () => {
               </p>
             </div>
             
-            {!isLoading && data?.status !== "completed" && data?.status !== "failed" && (
-              <div className="flex items-center gap-2 text-primary bg-primary/5 px-3 py-1.5 rounded-full border border-primary/20 animate-pulse">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-xs font-bold uppercase tracking-widest">Live Polling Active</span>
+            {!isLoading && data?.status === "completed" && (
+              <div className="flex items-center gap-2 text-green-500 bg-green-500/5 px-3 py-1.5 rounded-full border border-green-500/20">
+                <CheckCircle2 className="w-4 h-4" />
+                <span className="text-xs font-bold uppercase tracking-widest">
+                  Batch complete — {data.completed_items} of {data.total_items} analyzed
+                </span>
               </div>
             )}
           </div>
@@ -212,12 +240,15 @@ const BatchDashboard = () => {
           {/* Progress bar */}
           {!isLoading && (
             <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-primary transition-all duration-500 ease-out"
                 style={{ width: `${((data?.completed_items || 0) / (data?.total_items || 1)) * 100}%` }}
               />
             </div>
           )}
+
+          {/* Background processing banner */}
+          {!isLoading && data?.status === "running" && <BackgroundBanner />}
         </div>
 
         {isLoading ? (

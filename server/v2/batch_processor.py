@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 engine = create_engine(
     os.environ["DATABASE_URL"],
     pool_pre_ping=True,
-    pool_size=3,
-    max_overflow=5,
+    pool_size=1,          # Cloud Tasks gives horizontal scale; 8 instances × 2 max = 16 connections (fits Neon free tier)
+    max_overflow=1,
+    connect_args={"options": "-c statement_timeout=60000"},  # 60s query timeout
 )
 
 # Keep per-batch DB pressure below pool limits to avoid QueuePool timeouts.
@@ -181,6 +182,7 @@ async def process_single_item(item_id: int, priorities: Optional[list[str]] = No
 
                     # Skip repos that are already fully analyzed
                     if repo.repo_analysis and repo.repo_evaluation:
+                        logger.info(f"Cache hit for repo {repo_url} — skipping clone and analysis")
                         continue
 
                     try:
