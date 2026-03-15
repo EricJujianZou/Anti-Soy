@@ -89,7 +89,6 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_size=3,
     max_overflow=5,
-    connect_args={"options": "-c statement_timeout=60000"},  # 60s query timeout
 )
 
 # Create tables
