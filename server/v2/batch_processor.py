@@ -31,7 +31,6 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_size=1,          # Cloud Tasks gives horizontal scale; 8 instances × 2 max = 16 connections (fits Neon free tier)
     max_overflow=1,
-    connect_args={"options": "-c statement_timeout=60000"},  # 60s query timeout
 )
 
 # Keep per-batch DB pressure below pool limits to avoid QueuePool timeouts.
