@@ -52,9 +52,11 @@ from v2.schemas import (
     BatchUploadResponse,
     CandidateRepoDetail,
     CandidateDetailResponse,
+    TechStackLanguage,
     CompatibilityRequest,
     CompatibilityResponse,
     CompatibilityCallout,
+    ScoringConfig,
     VALID_PRIORITIES,
     DEFAULT_PRIORITIES,
 )
@@ -62,15 +64,19 @@ from prompt_modules import build_evaluation_prompt, build_questions_prompt, buil
 from v2.compatibility_scorer import compute_compatibility
 from v2.batch_processor import process_batch
 from v2.analysis_service import (
-    compute_verdict, 
-    save_analysis_results, 
-    save_evaluation_results, 
-    run_analysis_pipeline, 
+    compute_verdict,
+    save_analysis_results,
+    save_evaluation_results,
+    run_analysis_pipeline,
     run_evaluation_pipeline,
     get_or_create_user,
     get_or_create_repo,
     run_questions_from_db,
     run_multi_repo_questions,
+    compute_composite_score,
+    compute_candidate_score,
+    compute_tech_match_penalty,
+    aggregate_tech_stack,
 )
 
 
@@ -81,8 +87,9 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=3,
+    max_overflow=5,
+    connect_args={"options": "-c statement_timeout=60000"},  # 60s query timeout
 )
 
 # Create tables
@@ -191,8 +198,21 @@ def build_evaluate_response(repo: Repo, repo_evaluation: RepoEvaluation) -> Eval
     )
 
 
+def _load_scoring_config(batch_job: BatchJob) -> dict:
+    """Load ScoringConfig dict from BatchJob, falling back to defaults for old batches."""
+    if batch_job and batch_job.scoring_config:
+        try:
+            return json.loads(batch_job.scoring_config)
+        except Exception:
+            pass
+    return ScoringConfig().model_dump()
+
+
 def _compute_overall_score(repo_analysis: RepoAnalysis, repo_evaluation: RepoEvaluation) -> int:
-    """Compute composite 0-100 score for a single repo (used in batch status + candidate detail)."""
+    """
+    Legacy score used by /analyze and /analyze-stream (single-repo flow).
+    DO NOT DELETE — still used by the non-batch pipeline.
+    """
     score = 0
     bv = json.loads(repo_evaluation.business_value)
     if bv.get("solves_real_problem", False):
@@ -204,6 +224,42 @@ def _compute_overall_score(repo_analysis: RepoAnalysis, repo_evaluation: RepoEva
     if repo_analysis.ai_slop_score < 50:
         score += 20
     return score
+
+
+def _compute_repo_composite(repo_analysis: RepoAnalysis, repo_evaluation: RepoEvaluation, scoring_config_dict: dict) -> int:
+    """
+    Compute composite score for a single repo using the batch's scoring config.
+    Falls back to legacy scoring for old batches (no scoring_config on BatchJob).
+    """
+    bv = {}
+    if repo_evaluation and repo_evaluation.business_value:
+        try:
+            bv = json.loads(repo_evaluation.business_value)
+        except Exception:
+            pass
+
+    originality_score = bv.get("originality_score", 0.5)
+
+    bad_practices_findings = []
+    if repo_analysis and repo_analysis.bad_practices_data:
+        try:
+            bp_data = json.loads(repo_analysis.bad_practices_data)
+            bad_practices_findings = bp_data.get("findings", [])
+        except Exception:
+            pass
+
+    # Tech match penalty: not recomputed at read time (no stored dependencies here),
+    # so we pass 0.0 — penalty was already factored into the per-repo score during processing.
+    return compute_composite_score(
+        ai_slop_score=repo_analysis.ai_slop_score,
+        bad_practices_score=repo_analysis.bad_practices_score,
+        code_quality_score=repo_analysis.code_quality_score,
+        originality_score=originality_score,
+        bad_practices_findings=bad_practices_findings,
+        scoring_config=scoring_config_dict,
+        shipped_to_prod=False,  # Not re-detected at read time; safe default
+        tech_match_penalty=0.0,
+    )
 
 
 # =============================================================================
@@ -337,36 +393,49 @@ async def upload_batch(
     request: Request,
     background_tasks: BackgroundTasks,
     resumes: list[UploadFile] = File(...),
-    priorities: str = Form(None), # Passed as comma-separated string or JSON
+    priorities: str = Form(None),       # Legacy: comma-separated or JSON. Kept for backward compat.
+    scoring_config: str = Form(None),   # New: JSON-encoded ScoringConfig object.
     use_generic_questions: str = Form(None),
 ):
     """
     Upload a batch of resumes for background processing.
+    If scoring_config is provided it takes precedence over priorities.
+    priorities is kept for backward compatibility with old clients.
     """
     # 1. Validation: Max 10 files
     if len(resumes) > 10:
         raise HTTPException(status_code=400, detail="Maximum 10 files allowed per batch.")
-    
+
     # 2. Validation: Extensions
     for resume in resumes:
         ext = Path(resume.filename).suffix.lower()
         if ext not in [".pdf", ".docx"]:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Only .pdf and .docx allowed.")
 
-    # Parse priorities if provided
+    # Parse legacy priorities (still used by the single-repo /analyze-stream flow)
     priority_list = DEFAULT_PRIORITIES
     if priorities:
         try:
-            # Try parsing as JSON list
             parsed = json.loads(priorities)
             if isinstance(parsed, list):
                 priority_list = [p for p in parsed if p in VALID_PRIORITIES]
         except json.JSONDecodeError:
-            # Try comma-separated
             priority_list = [p.strip() for p in priorities.split(",") if p.strip() in VALID_PRIORITIES]
-    
     if not priority_list:
         priority_list = DEFAULT_PRIORITIES
+
+    # Parse scoring_config — takes precedence over priorities if valid
+    scoring_config_dict = None
+    if scoring_config:
+        try:
+            from pydantic import ValidationError
+            parsed_sc = json.loads(scoring_config)
+            ScoringConfig(**parsed_sc)  # validate
+            scoring_config_dict = parsed_sc
+        except Exception:
+            scoring_config_dict = None
+    if scoring_config_dict is None:
+        scoring_config_dict = ScoringConfig().model_dump()
 
     generic_questions_flag = use_generic_questions and use_generic_questions.lower() == "true"
 
@@ -380,10 +449,11 @@ async def upload_batch(
             total_items=len(resumes),
             status="pending",
             priorities=json.dumps(priority_list),
+            scoring_config=json.dumps(scoring_config_dict),
             use_generic_questions=generic_questions_flag,
         )
         session.add(batch_job)
-        
+
         # 4. Create BatchItems
         for i, resume in enumerate(resumes):
             content = await resume.read()
@@ -396,13 +466,32 @@ async def upload_batch(
                 status="pending"
             )
             session.add(item)
-            
+
         session.commit()
         
-        # 5. Kick off background task
+        item_ids = [item.id for item in session.query(BatchItem)
+                    .filter(BatchItem.batch_job_id == batch_id)
+                    .order_by(BatchItem.position)
+                    .all()]
+
+    task_mode = os.getenv("TASK_MODE", "asyncio")
+
+    if task_mode == "cloud_tasks":
+        # Enqueue one Cloud Task per item — distributed processing
+        from v2.task_dispatcher import enqueue_batch
+        enqueued = enqueue_batch(item_ids, batch_id)
+        logger.info(f"Enqueued {enqueued}/{len(item_ids)} Cloud Tasks for batch {batch_id}")
+        # Mark batch as running immediately (Cloud Tasks will drive progress)
+        with Session(engine) as session:
+            batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+            if batch_job:
+                batch_job.status = "running"
+                session.commit()
+    else:
+        # Fallback: asyncio background task (current behavior)
         background_tasks.add_task(process_batch, batch_id, priority_list, generic_questions_flag)
-        
-        return BatchUploadResponse(batch_id=batch_id)
+
+    return BatchUploadResponse(batch_id=batch_id)
 
 
 @app.get("/batch/{batch_id}/status", response_model=BatchStatusResponse)
@@ -415,12 +504,15 @@ def get_batch_status(request: Request, batch_id: str):
         batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
         if not batch_job:
             raise HTTPException(status_code=404, detail="Batch job not found")
-            
+
+        scoring_config_dict = _load_scoring_config(batch_job)
+        use_composite = bool(batch_job.scoring_config)  # Only use composite for new batches
+
         completed_count = session.query(BatchItem).filter(
-            BatchItem.batch_job_id == batch_id, 
+            BatchItem.batch_job_id == batch_id,
             BatchItem.status.in_(["completed", "error"])
         ).count()
-        
+
         item_statuses = []
         for item in batch_job.items:
             verdict = None
@@ -436,9 +528,30 @@ def get_batch_status(request: Request, batch_id: str):
                 if item.repo.repo_evaluation:
                     standout_features = json.loads(item.repo.repo_evaluation.standout_features)
 
-                # Compute overall score (0-100)
+                # Compute overall score — composite for new batches, legacy for old ones
                 if item.repo.repo_analysis and item.repo.repo_evaluation:
-                    overall_score = _compute_overall_score(item.repo.repo_analysis, item.repo.repo_evaluation)
+                    if use_composite:
+                        # For the list view, compute composite across all repos for this candidate
+                        batch_repos = (
+                            session.query(BatchItemRepo)
+                            .filter(BatchItemRepo.batch_item_id == item.id)
+                            .all()
+                        )
+                        repo_ids = [br.repo_id for br in batch_repos] if batch_repos else ([item.repo_id] if item.repo_id else [])
+                        all_repos = (
+                            session.query(Repo)
+                            .options(joinedload(Repo.repo_analysis), joinedload(Repo.repo_evaluation))
+                            .filter(Repo.id.in_(repo_ids))
+                            .all()
+                        ) if len(repo_ids) > 1 else [item.repo]
+
+                        repo_scores = []
+                        for r in all_repos:
+                            if r.repo_analysis and r.repo_evaluation:
+                                repo_scores.append(_compute_repo_composite(r.repo_analysis, r.repo_evaluation, scoring_config_dict))
+                        overall_score = compute_candidate_score(repo_scores) if repo_scores else None
+                    else:
+                        overall_score = _compute_overall_score(item.repo.repo_analysis, item.repo.repo_evaluation)
 
             item_statuses.append(BatchItemStatus(
                 id=item.id,
@@ -506,14 +619,35 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
             .all()
         }
 
+        # Load scoring config for this batch
+        batch_job_for_detail = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        scoring_config_dict = _load_scoring_config(batch_job_for_detail)
+        use_composite = bool(batch_job_for_detail and batch_job_for_detail.scoring_config)
+
         repo_details: list[CandidateRepoDetail] = []
         scores: list[int] = []
+        repo_tech_relevance: list[float] = []
+        tech_repos_for_aggregation: list[dict] = []
+
+        w_ai = scoring_config_dict.get("weights", {}).get("ai_detection", 0.7)
 
         for repo_id in repo_ids:
             repo = repos_map.get(repo_id)
             if not repo or not repo.repo_analysis or not repo.repo_evaluation:
                 continue
-            score = _compute_overall_score(repo.repo_analysis, repo.repo_evaluation)
+
+            if use_composite:
+                score = _compute_repo_composite(repo.repo_analysis, repo.repo_evaluation, scoring_config_dict)
+                # Compute tech relevance for weighted candidate average
+                # tech_match_penalty not re-derived at read time (no deps stored), default to 0 for relevance
+                tech_penalty = 0.0
+                ai_slop = repo.repo_analysis.ai_slop_score
+                base_relevance = 1.0 - (tech_penalty / 100)
+                ai_discount = max(0.0, 1.0 - (ai_slop / 100) * w_ai)
+                repo_tech_relevance.append(base_relevance * ai_discount)
+            else:
+                score = _compute_overall_score(repo.repo_analysis, repo.repo_evaluation)
+
             scores.append(score)
             repo_details.append(CandidateRepoDetail(
                 repo_id=repo.id,
@@ -524,10 +658,32 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
                 evaluation=build_evaluate_response(repo, repo.repo_evaluation),
             ))
 
+            # Collect data for tech stack aggregation
+            languages = {}
+            if repo.languages:
+                try:
+                    languages = json.loads(repo.languages)
+                except Exception:
+                    pass
+            tech_repos_for_aggregation.append({
+                "repo_name": repo.repo_name,
+                "languages": languages,
+                "ai_slop_score": repo.repo_analysis.ai_slop_score,
+            })
+
         if not repo_details:
             raise HTTPException(status_code=404, detail="No completed repo analyses found for this candidate")
 
-        overall_score = round(sum(scores) / len(scores))
+        if use_composite and scores:
+            overall_score = compute_candidate_score(scores, repo_tech_relevance if repo_tech_relevance else None)
+        else:
+            overall_score = round(sum(scores) / len(scores))
+
+        # Build tech stack breakdown
+        tech_stack_breakdown = None
+        if tech_repos_for_aggregation:
+            raw_breakdown = aggregate_tech_stack(tech_repos_for_aggregation)
+            tech_stack_breakdown = [TechStackLanguage(**entry) for entry in raw_breakdown]
 
         # Questions cached on the primary User — candidate-scoped, persists across batch runs
         interview_questions = None
@@ -542,6 +698,7 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
             overall_score=overall_score,
             repos=repo_details,
             interview_questions=interview_questions,
+            tech_stack_breakdown=tech_stack_breakdown,
         )
 
 
@@ -653,15 +810,101 @@ def generate_repo_interview_questions(request: Request, repo_id: int):
         return {"interview_questions": questions, "repo_id": repo_id}
 
 
+@app.post("/tasks/process-item")
+async def handle_task_process_item(request: Request):
+    """
+    Cloud Tasks callback endpoint. Processes a single BatchItem.
+
+    Authentication: shared secret in X-Task-Auth header.
+    Cloud Tasks will retry this endpoint (up to 3 times with backoff) if it
+    returns a non-2xx status. Idempotent: if item is already completed, returns 200.
+
+    This endpoint must respond within Cloud Run's request timeout (set to 300s).
+    """
+    # Authenticate the task
+    auth_secret = os.getenv("TASK_AUTH_SECRET", "")
+    task_auth = request.headers.get("X-Task-Auth", "")
+    if not auth_secret or task_auth != auth_secret:
+        # Return 200 to prevent Cloud Tasks from retrying unauthenticated requests
+        # (retrying won't help — the secret won't magically appear)
+        logger.warning("Rejected task request with invalid auth header")
+        return JSONResponse(status_code=200, content={"status": "rejected", "reason": "invalid_auth"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+    item_id = body.get("item_id")
+    batch_id = body.get("batch_id")
+
+    if not item_id or not batch_id:
+        return JSONResponse(status_code=400, content={"error": "item_id and batch_id required"})
+
+    # Check idempotency — if already completed, return 200 immediately
+    with Session(engine) as session:
+        item = session.query(BatchItem).filter(BatchItem.id == item_id).first()
+        if not item:
+            logger.warning(f"Task received for unknown item_id={item_id}")
+            return JSONResponse(status_code=200, content={"status": "not_found"})
+        if item.status == "completed":
+            logger.info(f"Item {item_id} already completed, skipping")
+            return JSONResponse(status_code=200, content={"status": "already_complete"})
+
+    # Process the item
+    from v2.batch_processor import process_single_item
+    from v2.schemas import DEFAULT_PRIORITIES
+    import json as _json
+
+    with Session(engine) as session:
+        batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        priorities = _json.loads(batch_job.priorities) if batch_job and batch_job.priorities else DEFAULT_PRIORITIES
+        use_generic_questions = bool(batch_job.use_generic_questions) if batch_job else False
+
+    await process_single_item(item_id, priorities, use_generic_questions)
+
+    # Check if all items are done — update BatchJob status
+    with Session(engine) as session:
+        batch_job = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
+        if batch_job and batch_job.status != "completed":
+            pending_count = session.query(BatchItem).filter(
+                BatchItem.batch_job_id == batch_id,
+                BatchItem.status.in_(["pending", "running"]),
+            ).count()
+            if pending_count == 0:
+                batch_job.status = "completed"
+                session.commit()
+                logger.info(f"Batch {batch_id} marked completed by task worker")
+
+    return JSONResponse(status_code=200, content={"status": "ok", "item_id": item_id})
+
+
 @app.on_event("startup")
 async def startup_event():
-    with Session(engine) as session:
-        # Find all jobs that aren't completed
-        unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
-        for job in unfinished_jobs:
-            logger.info(f"Resuming batch job {job.id} on startup")
-            priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
-            asyncio.create_task(process_batch(job.id, priorities, job.use_generic_questions))
+    task_mode = os.getenv("TASK_MODE", "asyncio")
+
+    if task_mode == "cloud_tasks":
+        # In Cloud Tasks mode, the queue is durable — tasks survive instance restarts.
+        # Re-enqueue only items that were stuck "running" (orphaned mid-process).
+        from v2.task_dispatcher import enqueue_batch_item
+        with Session(engine) as session:
+            stuck_items = session.query(BatchItem).filter(BatchItem.status == "running").all()
+            for item in stuck_items:
+                logger.info(f"Re-enqueuing stuck item {item.id} in batch {item.batch_job_id}")
+                item.status = "pending"  # Reset so process_single_item picks it up
+                session.commit()
+                try:
+                    enqueue_batch_item(item.id, item.batch_job_id)
+                except Exception as e:
+                    logger.error(f"Failed to re-enqueue item {item.id}: {e}")
+    else:
+        # asyncio mode: resume as before
+        with Session(engine) as session:
+            unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
+            for job in unfinished_jobs:
+                logger.info(f"Resuming batch job {job.id} on startup")
+                priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
+                asyncio.create_task(process_batch(job.id, priorities, job.use_generic_questions))
 
 
 @app.post("/analyze-stream")

@@ -122,6 +122,7 @@ class BatchJob(Base):
     total_items = Column(Integer, nullable=False)
     status = Column(String, default="pending", nullable=False)  # "pending" | "running" | "completed"
     priorities = Column(Text) # Store as JSON array
+    scoring_config = Column(Text, nullable=True)  # JSON: ScoringConfig object (nullable for backward compat)
     use_generic_questions = Column(Boolean, default=False, nullable=False)
 
     # Relationship to batch items
