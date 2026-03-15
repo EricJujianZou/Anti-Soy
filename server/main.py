@@ -861,7 +861,7 @@ async def handle_task_process_item(request: Request):
         priorities = _json.loads(batch_job.priorities) if batch_job and batch_job.priorities else DEFAULT_PRIORITIES
         use_generic_questions = bool(batch_job.use_generic_questions) if batch_job else False
 
-    await process_single_item(item_id, priorities, use_generic_questions)
+    await process_single_item(item_id, batch_id, priorities, use_generic_questions)
 
     # Check if all items are done — update BatchJob status
     with Session(engine) as session:
