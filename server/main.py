@@ -89,6 +89,7 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_size=3,
     max_overflow=5,
+    connect_args={"prepare_threshold": None},  # disables psycopg2 prepared stmt cache — required for Neon PgBouncer transaction pooling
 )
 
 # Create tables

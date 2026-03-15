@@ -31,6 +31,7 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_size=1,          # Cloud Tasks gives horizontal scale; 8 instances × 2 max = 16 connections (fits Neon free tier)
     max_overflow=1,
+    connect_args={"prepare_threshold": None},  # disables psycopg2 prepared stmt cache — required for Neon PgBouncer transaction pooling
 )
 
 # Keep per-batch DB pressure below pool limits to avoid QueuePool timeouts.
