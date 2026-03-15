@@ -168,8 +168,55 @@ STANDOUT FEATURES INSTRUCTIONS:
 # OUTPUT FORMAT (always included)
 # =============================================================================
 
+ORIGINALITY_SCORING_CALIBRATION = """
+ORIGINALITY SCORE INSTRUCTIONS (0.0 to 1.0):
+
+You MUST return a numeric originality_score between 0.0 and 1.0.
+
+IDEA ORIGINALITY (primary factor, ~60% of score):
+- 0.0-0.2: Common tutorial/portfolio projects: to-do app, weather app, calculator,
+  portfolio website, CRUD blog, chat app, e-commerce store, note-taking app,
+  URL shortener, expense tracker, social media clone.
+- 0.2-0.4: Standard utility projects with slight customization but fundamentally
+  the same as thousands of others.
+- 0.4-0.6: Projects that solve a real problem but in a well-trodden domain with
+  a standard approach.
+- 0.6-0.8: Projects in a niche domain, addressing a genuine gap, or combining
+  technologies in an unusual way.
+- 0.8-1.0: Truly novel projects: unique domain-specific tools, creative
+  applications of technology, research implementations, tools that don't
+  have obvious equivalents.
+
+IMPLEMENTATION ORIGINALITY (secondary factor, ~40% of score):
+- Generic boilerplate/template code implementing a generic idea = 0.0-0.1.
+- Standard implementation of a generic idea with minor customizations = 0.1-0.3.
+- Generic idea but with genuinely novel architecture, unique features, or
+  creative problem-solving in the implementation = 0.3-0.5.
+- Novel idea with standard implementation = 0.5-0.7.
+- Novel idea with creative implementation = 0.7-1.0.
+
+CRITICAL RULES:
+1. DO NOT say "while the idea isn't novel, the implementation shows..." unless
+   the implementation genuinely demonstrates something a senior engineer would
+   find impressive. Generic implementations of generic ideas = low originality.
+2. A to-do app with React + Node.js + MongoDB is NOT original regardless of how
+   clean the code is. Score: 0.05-0.15.
+3. A portfolio site with standard sections (about, projects, contact) is NOT
+   original. Score: 0.05-0.15.
+4. Using popular frameworks/libraries exactly as their tutorials teach is NOT
+   implementation originality.
+
+CALIBRATION EXAMPLES:
+- To-do app with CRUD and auth: originality_score = 0.05
+- Weather dashboard pulling from public API: originality_score = 0.10
+- E-commerce store following MERN tutorial: originality_score = 0.08
+- CLI tool that analyzes git commit patterns for team productivity: originality_score = 0.65
+- Custom browser extension that helps colorblind users: originality_score = 0.75
+- ML model for detecting plant diseases from photos, deployed as mobile app: originality_score = 0.80
+"""
+
 OUTPUT_FORMAT_EVALUATION = """
-Respond with a JSON object containing TWO parts:
+Respond with a JSON object containing THREE parts:
 
 {
   "business_value": {
@@ -182,7 +229,8 @@ Respond with a JSON object containing TWO parts:
   },
   "standout_features": [
     "Short punchy headline about something genuinely impressive"
-  ]
+  ],
+  "originality_score": 0.0
 }
 
 Return ONLY the JSON object, no other text or markdown formatting."""
@@ -451,8 +499,9 @@ def build_evaluation_prompt(
             module = module.format(ai_score=ai_slop_result.score)
         prompt_parts.append(module)
 
-    # Standout calibration + output format
+    # Standout calibration + originality scoring + output format
     prompt_parts.append(STANDOUT_CALIBRATION)
+    prompt_parts.append(ORIGINALITY_SCORING_CALIBRATION)
     prompt_parts.append(OUTPUT_FORMAT_EVALUATION)
 
     return "\n".join(prompt_parts)

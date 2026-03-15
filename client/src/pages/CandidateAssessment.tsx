@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useCandidateDetail } from "@/hooks/useCandidateDetail";
-import type { CandidateRepoDetail } from "@/services/batchApi";
+import type { CandidateRepoDetail, TechStackLanguage } from "@/services/batchApi";
 import { generateBatchInterviewQuestions } from "@/services/batchApi";
 import type { Finding, InterviewQuestion } from "@/services/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,6 +85,71 @@ const FindingRow = ({ finding }: { finding: Finding }) => (
     )}
   </div>
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TechStackBreakdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TechStackBreakdown = ({ breakdown }: { breakdown: TechStackLanguage[] }) => {
+  if (!breakdown || breakdown.length === 0) return null;
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-xs font-bold uppercase tracking-widest text-primary">Tech Stack Breakdown</span>
+        <div className="flex-1 border-t border-border/30" />
+      </div>
+      <Card className="border-border bg-card/50">
+        <CardContent className="pt-4 space-y-3">
+          {breakdown.map((entry) => {
+            const total = entry.total_projects;
+            const handPct = total > 0 ? (entry.hand_coded / total) * 100 : 0;
+            const vibePct = total > 0 ? (entry.vibe_coded / total) * 100 : 0;
+            return (
+              <div key={entry.language} className="space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-mono font-bold text-foreground">{entry.language}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {total} project{total !== 1 ? "s" : ""}
+                    {" · "}
+                    <span className="text-green-500">{entry.hand_coded} hand-coded</span>
+                    {entry.vibe_coded > 0 && (
+                      <>, <span className="text-amber-500">{entry.vibe_coded} vibe-coded</span></>
+                    )}
+                  </span>
+                </div>
+                {/* Stacked bar */}
+                <div className="h-2 rounded-full overflow-hidden bg-muted flex">
+                  {handPct > 0 && (
+                    <div
+                      className="h-full bg-green-500 transition-all"
+                      style={{ width: `${handPct}%` }}
+                    />
+                  )}
+                  {vibePct > 0 && (
+                    <div
+                      className="h-full bg-amber-500 transition-all"
+                      style={{ width: `${vibePct}%` }}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex items-center gap-4 pt-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Hand-coded
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Vibe-coded (AI ≥ 60)
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+};
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -418,6 +483,11 @@ const CandidateAssessment = () => {
             )}
           </div>
         </div>
+
+        {/* ── Tech Stack Breakdown ──────────────────────────────────────── */}
+        {data.tech_stack_breakdown && data.tech_stack_breakdown.length > 0 && (
+          <TechStackBreakdown breakdown={data.tech_stack_breakdown} />
+        )}
 
         {/* ── Project Assessments ────────────────────────────────────────── */}
         <section>
