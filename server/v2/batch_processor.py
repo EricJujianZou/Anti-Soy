@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 engine = create_engine(
     os.environ["DATABASE_URL"],
     pool_pre_ping=True,
-    pool_size=1,          # Cloud Tasks gives horizontal scale; 8 instances × 2 max = 16 connections (fits Neon free tier)
-    max_overflow=1,
+    pool_size=3,
+    max_overflow=5,
+    pool_timeout=60,
     connect_args={"prepare_threshold": None},  # disables psycopg2 prepared stmt cache — required for Neon PgBouncer transaction pooling
 )
 
