@@ -898,13 +898,15 @@ async def startup_event():
                 except Exception as e:
                     logger.error(f"Failed to re-enqueue item {item.id}: {e}")
     else:
-        # asyncio mode: resume as before
-        with Session(engine) as session:
-            unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
-            for job in unfinished_jobs:
-                logger.info(f"Resuming batch job {job.id} on startup")
-                priorities = json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES
-                asyncio.create_task(process_batch(job.id, priorities, job.use_generic_questions))
+        # asyncio mode: resume unfinished batches sequentially to avoid DB pool exhaustion
+        async def _resume_batches():
+            with Session(engine) as session:
+                unfinished_jobs = session.query(BatchJob).filter(BatchJob.status.in_(["pending", "running"])).all()
+                job_infos = [(job.id, json.loads(job.priorities) if job.priorities else DEFAULT_PRIORITIES, job.use_generic_questions) for job in unfinished_jobs]
+            for job_id, priorities, use_generic in job_infos:
+                logger.info(f"Resuming batch job {job_id} on startup")
+                await process_batch(job_id, priorities, use_generic)
+        asyncio.create_task(_resume_batches())
 
 
 @app.post("/analyze-stream")
