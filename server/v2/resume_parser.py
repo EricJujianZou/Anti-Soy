@@ -154,6 +154,7 @@ def GithubFromResumeDump(resume_dump: struct_resume_dump) -> str:
     
     # find all instances of github.com links in a resume
     for link in resume_dump.hyperlinks:
+        link = link.strip()
         if "github.com" in link:
             candidates.append(link)
     for token in plaintext_tokens:
