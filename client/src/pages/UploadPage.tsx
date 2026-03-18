@@ -18,8 +18,8 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const TOOL_OPTIONS = [
-  "AWS", "GCP", "Azure", "Docker", "Kubernetes", "Terraform", "CI/CD",
-  "PostgreSQL", "MongoDB", "Redis", "GraphQL", "REST API",
+  "AWS", "GCP", "Azure", "Docker", "Kubernetes", "Terraform",
+  "PostgreSQL", "MongoDB", "Redis", "GraphQL",
   "Microsoft 365/Dynamics", "Elasticsearch", "RabbitMQ", "Kafka",
 ];
 
@@ -42,21 +42,17 @@ const SliderRow = ({ label, description, value, onChange, disabled }: SliderRowP
         <span className="text-sm font-medium text-foreground">{label}</span>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
-      <span className="text-sm font-mono text-primary tabular-nums w-8 text-right">{value.toFixed(1)}</span>
+      <span className="text-sm font-mono text-primary tabular-nums w-10 text-right">{value}%</span>
     </div>
-    <div className="flex items-center gap-3">
-      <span className="text-[10px] text-muted-foreground uppercase tracking-wider w-12 text-right">Lenient</span>
-      <Slider
-        min={0}
-        max={1}
-        step={0.1}
-        value={[value]}
-        onValueChange={([v]) => onChange(v)}
-        disabled={disabled}
-        className="flex-1"
-      />
-      <span className="text-[10px] text-muted-foreground uppercase tracking-wider w-8">Strict</span>
-    </div>
+    <Slider
+      min={0}
+      max={100}
+      step={1}
+      value={[value]}
+      onValueChange={([v]) => onChange(v)}
+      disabled={disabled}
+      className="flex-1"
+    />
   </div>
 );
 
@@ -169,10 +165,42 @@ const UploadPage = () => {
   const [scoringConfig, setScoringConfig] = useState<ScoringConfig>(DEFAULT_SCORING_CONFIG);
 
   const updateWeight = (key: keyof ScoringConfig["weights"], value: number) => {
-    setScoringConfig((prev) => ({
-      ...prev,
-      weights: { ...prev.weights, [key]: value },
-    }));
+    setScoringConfig((prev) => {
+      const oldWeights = prev.weights;
+      const oldValue = oldWeights[key];
+      const newValue = Math.max(0, Math.min(100, Math.round(value)));
+      const delta = newValue - oldValue;
+
+      if (delta === 0) return prev;
+
+      // Auto-redistribute: distribute delta proportionally across other sliders
+      const otherKeys = (Object.keys(oldWeights) as Array<keyof typeof oldWeights>).filter((k) => k !== key);
+      const otherSum = otherKeys.reduce((sum, k) => sum + oldWeights[k], 0);
+
+      const newWeights = { ...oldWeights, [key]: newValue };
+
+      if (otherSum === 0) {
+        // All others are 0 — distribute evenly
+        const share = Math.floor(-delta / otherKeys.length);
+        otherKeys.forEach((k) => { newWeights[k] = Math.max(0, share); });
+      } else {
+        // Distribute proportionally
+        let remaining = -delta;
+        otherKeys.forEach((k, i) => {
+          if (i === otherKeys.length - 1) {
+            // Last key gets the remainder to ensure sum = 100
+            newWeights[k] = Math.max(0, oldWeights[k] + remaining);
+          } else {
+            const proportion = oldWeights[k] / otherSum;
+            const adjustment = Math.round(-delta * proportion);
+            newWeights[k] = Math.max(0, oldWeights[k] + adjustment);
+            remaining -= adjustment;
+          }
+        });
+      }
+
+      return { ...prev, weights: newWeights };
+    });
   };
 
   const setRequiredLanguages = (langs: string[]) => {
@@ -279,37 +307,44 @@ const UploadPage = () => {
             <div className="p-4 border border-border/50 rounded-lg bg-muted/5 space-y-5">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-widest text-primary">
-                  Scoring Weights
+                  Scoring Weights (must sum to 100%)
                 </span>
                 <div className="flex-1 border-t border-border/30" />
               </div>
 
               <SliderRow
                 label="AI Detection"
-                description="How harshly to penalize AI-generated code"
+                description="How much AI-generated code matters in the final score"
                 value={scoringConfig.weights.ai_detection}
                 onChange={(v) => updateWeight("ai_detection", v)}
                 disabled={isUploading}
               />
               <SliderRow
                 label="Security"
-                description="How harshly to penalize security issues"
+                description="How much security practices matter in the final score"
                 value={scoringConfig.weights.security}
                 onChange={(v) => updateWeight("security", v)}
                 disabled={isUploading}
               />
               <SliderRow
                 label="Code Quality"
-                description="How harshly to penalize poor code quality"
+                description="How much code quality matters in the final score"
                 value={scoringConfig.weights.code_quality}
                 onChange={(v) => updateWeight("code_quality", v)}
                 disabled={isUploading}
               />
               <SliderRow
                 label="Originality"
-                description="How harshly to penalize unoriginal projects"
+                description="How much project originality matters in the final score"
                 value={scoringConfig.weights.originality}
                 onChange={(v) => updateWeight("originality", v)}
+                disabled={isUploading}
+              />
+              <SliderRow
+                label="Tech Match"
+                description="How much matching the required tech stack matters"
+                value={scoringConfig.weights.tech_match}
+                onChange={(v) => updateWeight("tech_match", v)}
                 disabled={isUploading}
               />
 

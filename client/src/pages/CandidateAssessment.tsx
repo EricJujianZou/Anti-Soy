@@ -370,6 +370,62 @@ const ProjectCard = ({ repo }: { repo: CandidateRepoDetail }) => {
                   ))}
                 </div>
               )}
+
+              {/* Score Breakdown */}
+              {repo.score_breakdown && (
+                <Collapsible>
+                  <CollapsibleTrigger className="w-full flex items-center justify-between py-2 hover:bg-muted/20 transition-colors text-left">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                        Score Breakdown
+                      </span>
+                      <Badge variant="outline" className="font-mono text-xs">
+                        {repo.score_breakdown.final_score}/100
+                      </Badge>
+                      {repo.is_matched && (
+                        <Badge variant="outline" className="text-green-500 border-green-500/40 text-[10px]">
+                          Resume Match
+                        </Badge>
+                      )}
+                      {repo.repo_weight != null && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {repo.repo_weight}% weight
+                        </span>
+                      )}
+                    </div>
+                    <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-2 space-y-2">
+                    <div className="rounded bg-muted/20 p-3 font-mono text-xs space-y-1.5">
+                      {repo.score_breakdown.categories.map((c) => (
+                        <div key={c.category} className="flex justify-between">
+                          <span className="text-muted-foreground">
+                            {c.category} ({c.weight}%)
+                          </span>
+                          <span>
+                            {c.sub_score} &times; {c.weight}% ={" "}
+                            <strong>{c.contribution}</strong>
+                          </span>
+                        </div>
+                      ))}
+                      <div className="border-t border-border/40 pt-1.5 flex justify-between font-bold">
+                        <span>Weighted Sum</span>
+                        <span>{repo.score_breakdown.weighted_sum}</span>
+                      </div>
+                      {repo.score_breakdown.shipped_to_prod_bonus && repo.score_breakdown.shipped_to_prod_multiplier && (
+                        <div className="flex justify-between text-green-500">
+                          <span>Shipped to Prod Bonus (&times;{repo.score_breakdown.shipped_to_prod_multiplier})</span>
+                          <span>{repo.score_breakdown.final_score}</span>
+                        </div>
+                      )}
+                      <div className="border-t border-border/40 pt-1.5 flex justify-between text-base font-bold">
+                        <span>Final Score</span>
+                        <span>{repo.score_breakdown.final_score}/100</span>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
             </CollapsibleContent>
           </div>
         </Collapsible>

@@ -85,6 +85,21 @@ export async function getBatchStatus(batchId: string): Promise<BatchStatusRespon
 // CANDIDATE DETAIL
 // =============================================================================
 
+export interface CategoryScore {
+  category: string;
+  sub_score: number;      // 0-100, higher = better
+  weight: number;         // percentage (e.g., 30)
+  contribution: number;   // sub_score * weight / 100
+}
+
+export interface ScoreBreakdown {
+  categories: CategoryScore[];
+  weighted_sum: number;
+  shipped_to_prod_bonus: boolean;
+  shipped_to_prod_multiplier: number | null;  // 1.1 if applied
+  final_score: number;
+}
+
 export interface CandidateRepoDetail {
   repo_id: number;
   repo_url: string;
@@ -92,6 +107,9 @@ export interface CandidateRepoDetail {
   overall_score: number;
   analysis: AnalysisResponse;
   evaluation: EvaluateResponse;
+  score_breakdown?: ScoreBreakdown | null;
+  repo_weight?: number | null;    // percentage weight in candidate-level aggregation
+  is_matched?: boolean | null;    // true if repo matched a resume project
 }
 
 export interface TechStackLanguage {

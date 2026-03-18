@@ -136,7 +136,7 @@ def run_analysis_pipeline(repo_url: str):
         
         return extracted_data, ai_slop, bad_practices, code_quality, verdict
 
-def save_analysis_results(session: Session, repo_id: int, extracted_data, ai_slop, bad_practices, code_quality, verdict):
+def save_analysis_results(session: Session, repo_id: int, extracted_data, ai_slop, bad_practices, code_quality, verdict, *, shipped_to_prod: bool = False):
     """
     Saves analysis results to the database. Updates existing record if one already exists.
     """
@@ -158,6 +158,7 @@ def save_analysis_results(session: Session, repo_id: int, extracted_data, ai_slo
         repo_analysis.code_quality_score = code_quality.score
         repo_analysis.code_quality_data = code_quality.model_dump_json()
         repo_analysis.files_analyzed = json.dumps(files_analyzed)
+        repo_analysis.shipped_to_prod = shipped_to_prod
     else:
         repo_analysis = RepoAnalysis(
             repo_id=repo_id,
@@ -172,13 +173,17 @@ def save_analysis_results(session: Session, repo_id: int, extracted_data, ai_slo
             code_quality_score=code_quality.score,
             code_quality_data=code_quality.model_dump_json(),
             files_analyzed=json.dumps(files_analyzed),
+            shipped_to_prod=shipped_to_prod,
         )
         session.add(repo_analysis)
 
-    # Update repo languages
+    # Update repo languages and dependencies
     repo = session.query(Repo).filter(Repo.id == repo_id).first()
-    if repo and extracted_data.languages:
-        repo.languages = json.dumps(extracted_data.languages)
+    if repo:
+        if extracted_data.languages:
+            repo.languages = json.dumps(extracted_data.languages)
+        if extracted_data.dependencies:
+            repo.dependencies = json.dumps(extracted_data.dependencies)
 
     session.flush()
     return repo_analysis
@@ -318,53 +323,52 @@ def save_evaluation_results(
 def compute_severity_aware_security_penalty(
     raw_bad_practices_score: int,
     findings: list[dict],
-    security_weight: float,
 ) -> int:
     """
-    Recompute bad practices penalty with severity-aware scaling.
+    Compute raw severity-based security penalty (0-100). Higher = more issues.
 
-    CRITICAL findings (hardcoded secrets, .env committed) always apply at full weight.
-    WARNING findings scale linearly with the slider weight.
-    INFO findings are heavily discounted at low slider values.
+    CRITICAL findings (hardcoded secrets, .env committed) are weighted heavily.
+    WARNING findings are moderate.
+    INFO findings are lightly weighted.
+
+    The category weight (how much security matters in the final score) is applied
+    externally by the weighted average formula — not here.
     """
     if not findings:
         return raw_bad_practices_score
 
     SEVERITY_WEIGHTS = {"critical": 60, "warning": 20, "info": 5}
-    severity_multipliers = {
-        "critical": 1.0,               # Always full weight — hardcoded secrets etc.
-        "warning": security_weight,     # Scales linearly with slider
-        "info": security_weight * 0.3,  # Heavily discounted at low slider values
-    }
 
-    total_weight = 0
+    total = 0
     for finding in findings:
         severity = finding.get("severity", "info").lower()
-        base_weight = SEVERITY_WEIGHTS.get(severity, 5)
-        multiplier = severity_multipliers.get(severity, security_weight)
-        total_weight += base_weight * multiplier
+        total += SEVERITY_WEIGHTS.get(severity, 5)
 
-    return min(100, round(total_weight))
+    return min(100, round(total))
 
 
-def compute_tech_match_penalty(
+def compute_tech_match_score(
     repo_languages: dict[str, int],
     repo_dependencies: list[str],
     ai_slop_score: int,
     required_tech: dict,
 ) -> float:
     """
-    Compute penalty (0-100) based on how well a repo matches the required tech stack.
-    Higher = worse match. 0 = perfect match or no requirements.
+    Compute tech match score (0-100). Higher = better match.
+    100 = perfect match or no requirements. 0 = nothing matches.
+
+    AI discount: if ai_slop_score >= 60 (vibe-coded), matched techs from this
+    repo are discounted to 0 — the candidate can't claim proficiency in a skill
+    if their code using it was AI-generated.
     """
     required_langs = required_tech.get("languages", [])
     required_tools = required_tech.get("tools", [])
 
     if not required_langs and not required_tools:
-        return 0.0
+        return 100.0  # No requirements = full marks
 
     total_required = len(required_langs) + len(required_tools)
-    matched = 0
+    is_vibe_coded = ai_slop_score >= 60
 
     repo_lang_lower = {lang.lower() for lang in repo_languages.keys()}
 
@@ -386,18 +390,21 @@ def compute_tech_match_penalty(
 
     dep_lower = [d.lower() for d in repo_dependencies]
 
+    # Count raw matches (before AI discount)
+    raw_matched = 0
+
     for req_lang in required_langs:
         req_lower = req_lang.lower()
         if req_lower in repo_lang_lower:
-            matched += 1
+            raw_matched += 1
             continue
         expected_langs = FRAMEWORK_TO_LANG.get(req_lower, set())
         if expected_langs and expected_langs & repo_lang_lower:
             if any(req_lower.replace(".", "").replace(" ", "") in d for d in dep_lower):
-                matched += 1
+                raw_matched += 1
                 continue
         if any(req_lower.replace(" ", "-") in d or req_lower.replace(" ", "") in d for d in dep_lower):
-            matched += 1
+            raw_matched += 1
 
     TOOL_INDICATORS = {
         "aws": ["aws", "boto3", "aws-cdk", "aws-sdk", "serverless"],
@@ -406,12 +413,10 @@ def compute_tech_match_penalty(
         "docker": ["docker"],
         "kubernetes": ["kubernetes", "k8s", "kubectl"],
         "terraform": ["terraform"],
-        "ci/cd": [],
         "postgresql": ["pg", "postgres", "psycopg", "sequelize", "prisma"],
         "mongodb": ["mongo", "mongoose", "pymongo"],
         "redis": ["redis", "ioredis"],
         "graphql": ["graphql", "apollo", "@apollo"],
-        "rest api": [],
         "microsoft 365/dynamics": ["microsoft365", "dynamics", "@microsoft"],
         "elasticsearch": ["elasticsearch", "elastic"],
         "rabbitmq": ["rabbitmq", "amqp", "pika"],
@@ -422,16 +427,89 @@ def compute_tech_match_penalty(
         req_lower = req_tool.lower()
         indicators = TOOL_INDICATORS.get(req_lower, [req_lower])
         if any(ind in d for d in dep_lower for ind in indicators):
-            matched += 1
+            raw_matched += 1
 
-    match_ratio = matched / total_required if total_required > 0 else 1.0
-    missing_penalty = (1.0 - match_ratio) * 100
+    # AI discount: vibe-coded repos get 0 credit for matched tech
+    matched = 0 if is_vibe_coded else raw_matched
 
-    # Extra penalty for vibe-coded tech matches
-    if matched > 0 and ai_slop_score >= 60:
-        missing_penalty += 15
+    return (matched / total_required) * 100 if total_required > 0 else 100.0
 
-    return min(100.0, missing_penalty)
+
+def compute_score_breakdown(
+    ai_slop_score: int,
+    bad_practices_score: int,
+    code_quality_score: int,
+    originality_score: float,
+    bad_practices_findings: list[dict],
+    scoring_config: dict,
+    shipped_to_prod: bool = False,
+    repo_languages: dict | None = None,
+    repo_dependencies: list | None = None,
+) -> dict:
+    """
+    Compute composite score with full breakdown. Single source of truth for scoring logic.
+
+    All sub-scores are 0-100 (higher = better). Final score is a weighted average
+    where weights are percentages summing to 100.
+
+    Returns a dict matching the ScoreBreakdown schema.
+    """
+    weights = scoring_config.get("weights", {})
+    w_ai = weights.get("ai_detection", 30)
+    w_sec = weights.get("security", 15)
+    w_cq = weights.get("code_quality", 25)
+    w_orig = weights.get("originality", 15)
+    w_tech = weights.get("tech_match", 15)
+
+    # Sub-scores: all 0-100, higher = better
+    ai_sub = 100 - ai_slop_score
+    security_penalty = compute_severity_aware_security_penalty(bad_practices_score, bad_practices_findings)
+    security_sub = 100 - security_penalty
+    quality_sub = code_quality_score
+    originality_sub = round(originality_score * 100)
+
+    # Tech match score (positive: higher = better match)
+    required_tech = scoring_config.get("required_tech", {})
+    tech_sub = round(compute_tech_match_score(
+        repo_languages=repo_languages or {},
+        repo_dependencies=repo_dependencies or [],
+        ai_slop_score=ai_slop_score,
+        required_tech=required_tech,
+    ))
+
+    categories = [
+        {"category": "AI Detection", "sub_score": ai_sub, "weight": w_ai},
+        {"category": "Security", "sub_score": security_sub, "weight": w_sec},
+        {"category": "Code Quality", "sub_score": quality_sub, "weight": w_cq},
+        {"category": "Originality", "sub_score": originality_sub, "weight": w_orig},
+        {"category": "Tech Match", "sub_score": tech_sub, "weight": w_tech},
+    ]
+
+    # Compute contribution for each category
+    total_weight = sum(c["weight"] for c in categories)
+    if total_weight == 0:
+        total_weight = 100  # fallback
+
+    for c in categories:
+        c["contribution"] = round(c["sub_score"] * c["weight"] / total_weight, 1)
+
+    weighted_sum = round(sum(c["contribution"] for c in categories), 1)
+
+    # Shipped to prod bonus: ×1.10 multiplier on the weighted sum
+    shipped_multiplier = None
+    if scoring_config.get("shipped_to_prod_bonus", True) and shipped_to_prod:
+        shipped_multiplier = 1.1
+        weighted_sum = round(weighted_sum * 1.1, 1)
+
+    final_score = max(0, min(100, round(weighted_sum)))
+
+    return {
+        "categories": categories,
+        "weighted_sum": weighted_sum,
+        "shipped_to_prod_bonus": shipped_to_prod if scoring_config.get("shipped_to_prod_bonus", True) else False,
+        "shipped_to_prod_multiplier": shipped_multiplier,
+        "final_score": final_score,
+    }
 
 
 def compute_composite_score(
@@ -442,60 +520,62 @@ def compute_composite_score(
     bad_practices_findings: list[dict],
     scoring_config: dict,
     shipped_to_prod: bool = False,
-    tech_match_penalty: float = 0.0,
+    repo_languages: dict | None = None,
+    repo_dependencies: list | None = None,
 ) -> int:
     """Compute composite 0-100 score for a single repo. Higher = better candidate."""
-    weights = scoring_config.get("weights", {})
-    w_ai = weights.get("ai_detection", 0.7)
-    w_sec = weights.get("security", 0.5)
-    w_cq = weights.get("code_quality", 0.5)
-    w_orig = weights.get("originality", 0.5)
-
-    ai_penalty = ai_slop_score
-    security_penalty = compute_severity_aware_security_penalty(bad_practices_score, bad_practices_findings, w_sec)
-    quality_penalty = 100 - code_quality_score
-    originality_penalty = (1.0 - originality_score) * 100
-
-    total_weight = w_ai + w_sec + w_cq + w_orig
-    if total_weight == 0:
-        total_weight = 1.0
-
-    weighted_penalty = (
-        ai_penalty * w_ai +
-        security_penalty * w_sec +
-        quality_penalty * w_cq +
-        originality_penalty * w_orig
-    ) / total_weight
-
-    if scoring_config.get("shipped_to_prod_bonus", True) and shipped_to_prod:
-        weighted_penalty *= 0.85
-
-    required_tech = scoring_config.get("required_tech", {})
-    has_required = bool(required_tech.get("languages") or required_tech.get("tools"))
-    if has_required and tech_match_penalty > 0:
-        weighted_penalty = weighted_penalty * 0.7 + tech_match_penalty * 0.3
-
-    return max(0, min(100, round(100 - weighted_penalty)))
+    breakdown = compute_score_breakdown(
+        ai_slop_score, bad_practices_score, code_quality_score,
+        originality_score, bad_practices_findings, scoring_config,
+        shipped_to_prod, repo_languages, repo_dependencies,
+    )
+    return breakdown["final_score"]
 
 
 def compute_candidate_score(
     repo_scores: list[int],
-    repo_tech_relevance: list[float] | None = None,
+    repo_is_matched: list[bool] | None = None,
 ) -> int:
     """
-    Weighted average of repo scores.
-    repo_tech_relevance[i] = (1 - tech_match_penalty/100) * max(0, 1 - (ai_slop/100) * w_ai)
-    Repos matching required tech AND hand-coded are weighted higher.
+    Weighted average of repo composite scores.
+
+    Repos matched from the candidate's resume get higher weight than
+    repos that were padded/filled as fallbacks.
+
+    Weight formula:
+      - If all matched or none matched: equal weight (100/N per repo)
+      - Else: matched repos get 40% each (capped at 80% total),
+              unmatched repos split the remainder equally.
     """
     if not repo_scores:
         return 0
-    if repo_tech_relevance and len(repo_tech_relevance) == len(repo_scores):
-        total_weight = sum(repo_tech_relevance)
-        if total_weight == 0:
-            return round(sum(repo_scores) / len(repo_scores))
-        weighted = sum(s * w for s, w in zip(repo_scores, repo_tech_relevance))
-        return max(0, min(100, round(weighted / total_weight)))
-    return round(sum(repo_scores) / len(repo_scores))
+
+    n = len(repo_scores)
+    if n == 1:
+        return repo_scores[0]
+
+    # Determine per-repo weights
+    if repo_is_matched and len(repo_is_matched) == n:
+        m = sum(1 for x in repo_is_matched if x)
+        u = n - m
+
+        if m == 0 or m == n:
+            # All matched or none matched: equal weight
+            repo_weights = [100.0 / n] * n
+        else:
+            matched_each = 40.0
+            if m * matched_each > 80:
+                matched_each = 80.0 / m
+            unmatched_each = (100.0 - m * matched_each) / u
+            repo_weights = [
+                matched_each if is_m else unmatched_each
+                for is_m in repo_is_matched
+            ]
+    else:
+        repo_weights = [100.0 / n] * n
+
+    weighted = sum(s * w / 100 for s, w in zip(repo_scores, repo_weights))
+    return max(0, min(100, round(weighted)))
 
 
 def aggregate_tech_stack(repos: list[dict]) -> list[dict]:
