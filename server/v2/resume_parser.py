@@ -4,12 +4,15 @@ Handles finding the GitHub corresponding to a person's resume.
 resume_parser.py is currently planned to support .pdf and .docx files
 """
 
+import logging
 import pymupdf
 import docx
 import json
 import re
 from pathlib import Path
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 PARENT_DIRECTORY = Path(__file__).parent
 
@@ -99,6 +102,8 @@ def PdfExtractor(pdf_path: str) -> struct_resume_dump:
             for page in pdf:
                 text += page.get_text() + "\n"
                 for link in page.get_links():
+                    if not "uri" in link: # idk why sometimes links don't have uri so this needs to be checked
+                        continue
                     hyperlinks.append(link["uri"])
 
     except Exception as e:
@@ -229,55 +234,6 @@ def GithubFromResumeDump(resume_dump: struct_resume_dump) -> str:
 def ProfileFromResume(resume_path: str) -> str:
     resume_dump = GeneralExtractor(resume_path)
     return GithubFromResumeDump(resume_dump)
-    
-def ExtractCandidateInfo(resume_dump: struct_resume_dump) -> CandidateInfo:
-    # 1. Name: first non-empty, non-whitespace line
-    name = "Unknown Candidate"
-    for line in resume_dump.plaintext.split("\n"):
-        if line.strip():
-            name = line.strip()
-            break
-            
-    # 2. GitHub Profile URL
-    github_profile_url = None
-    try:
-        github_profile_url = GithubFromResumeDump(resume_dump)
-    except ResumeParseException:
-        pass
-        
-    # 4. Project Names
-    project_names = []
-    lines = resume_dump.plaintext.split("\n")
-    projects_found = False
-    for i, line in enumerate(lines):
-        if not projects_found:
-            if re.search(r"\bprojects?\b", line, re.IGNORECASE):
-                projects_found = True
-        else:
-            # Look for project titles in subsequent lines
-            stripped = line.strip()
-            if not stripped:
-                continue
-            
-            # Heuristic for project title: short lines, ≤6 words, not all lowercase, before next section
-            # Check if it looks like a section header (all caps or common keywords)
-            if re.match(r"^(EDUCATION|EXPERIENCE|SKILLS|LANGUAGES|AWARDS|CERTIFICATIONS|VOLUNTEERING)$", stripped, re.IGNORECASE):
-                break
-                
-            words = stripped.split()
-            if len(words) <= 6 and not stripped.islower():
-                project_names.append(stripped)
-            
-            # Stop if we have a few projects or if we've gone too far
-            if len(project_names) >= 5:
-                break
-                
-    return CandidateInfo(
-        name=name,
-        github_profile_url=github_profile_url,
-        project_names=project_names
-    )
-
 
 
 # used for unit testing

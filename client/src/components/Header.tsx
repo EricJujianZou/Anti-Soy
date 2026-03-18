@@ -18,7 +18,7 @@ export const Header = ({ className }: HeaderProps) => {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate(-1)}
+              onClick={() => navigate("/")}
               className="flex items-center gap-2 text-primary font-bold text-xl tracking-tight hover:text-primary/80 transition-colors"
               aria-label="Go back"
             >
