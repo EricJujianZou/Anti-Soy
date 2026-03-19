@@ -2,11 +2,12 @@ import { useState, useCallback, useRef } from "react";
 import { Header } from "@/components/Header";
 import { useBatchUpload } from "@/hooks/useBatchUpload";
 import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/utils/utils";
-import { X, Upload, FileText, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { X, Upload, FileText, Loader2, ChevronDown, ChevronUp, Files } from "lucide-react";
 import { DEFAULT_SCORING_CONFIG, type ScoringConfig } from "@/services/api";
 
 // ─── Tech stack options ───────────────────────────────────────────────────────
@@ -159,7 +160,9 @@ const TechMultiselect = ({ label, options, selected, onChange, disabled }: TechM
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const UploadPage = () => {
-  const { files, addFiles, removeFile, handleUpload, isUploading } = useBatchUpload();
+  const { files, uploadMode, changeUploadMode, addFiles, removeFile, handleUpload, isUploading } = useBatchUpload();
+  const isMerged = uploadMode === "merged";
+  const maxFiles = isMerged ? 1 : 100;
   const [isDragging, setIsDragging] = useState(false);
   const [useGenericQuestions, setUseGenericQuestions] = useState(false);
   const [scoringConfig, setScoringConfig] = useState<ScoringConfig>(DEFAULT_SCORING_CONFIG);
@@ -255,7 +258,9 @@ const UploadPage = () => {
             Upload Candidate Resumes
           </h1>
           <p className="text-muted-foreground">
-            Upload up to 10 resumes to analyze candidates in batch
+            {isMerged
+              ? "Upload a single PDF containing multiple candidate resumes"
+              : "Upload up to 100 resumes to analyze candidates in batch"}
           </p>
         </div>
 
@@ -266,42 +271,99 @@ const UploadPage = () => {
           <span className="absolute -bottom-px -right-px text-primary text-sm p-1">┘</span>
 
           <CardContent className="pt-6 space-y-8">
-            {/* ── Drop zone ── */}
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={cn(
-                "border-2 border-dashed rounded-lg p-12 text-center transition-all duration-300",
-                isDragging ? "border-primary bg-primary/5 glow-amber" : "border-border hover:border-primary/50",
-                files.length >= 10 && "opacity-50 cursor-not-allowed"
-              )}
+            {/* ── Upload mode tabs ── */}
+            <Tabs
+              value={uploadMode}
+              onValueChange={(v) => changeUploadMode(v as "individual" | "merged")}
             >
-              <input
-                type="file"
-                multiple
-                accept=".pdf,.docx"
-                onChange={handleFileChange}
-                disabled={files.length >= 10 || isUploading}
-                className="hidden"
-                id="file-upload"
-              />
-              <label
-                htmlFor="file-upload"
-                className={cn(
-                  "flex flex-col items-center cursor-pointer",
-                  files.length >= 10 && "cursor-not-allowed"
-                )}
-              >
-                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 text-primary">
-                  <Upload className="w-8 h-8" />
+              <TabsList className="w-full">
+                <TabsTrigger value="individual" className="flex-1 gap-2" disabled={isUploading}>
+                  <Upload className="w-3.5 h-3.5" /> Individual Resumes
+                </TabsTrigger>
+                <TabsTrigger value="merged" className="flex-1 gap-2" disabled={isUploading}>
+                  <Files className="w-3.5 h-3.5" /> Merged PDF
+                </TabsTrigger>
+              </TabsList>
+
+              {/* ── Individual mode drop zone ── */}
+              <TabsContent value="individual">
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "border-2 border-dashed rounded-lg p-12 text-center transition-all duration-300",
+                    isDragging ? "border-primary bg-primary/5 glow-amber" : "border-border hover:border-primary/50",
+                    files.length >= maxFiles && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.docx"
+                    onChange={handleFileChange}
+                    disabled={files.length >= maxFiles || isUploading}
+                    className="hidden"
+                    id="file-upload-individual"
+                  />
+                  <label
+                    htmlFor="file-upload-individual"
+                    className={cn(
+                      "flex flex-col items-center cursor-pointer",
+                      files.length >= maxFiles && "cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 text-primary">
+                      <Upload className="w-8 h-8" />
+                    </div>
+                    <p className="text-lg font-medium mb-1">
+                      {isDragging ? "Drop files here" : "Click to browse or drag and drop"}
+                    </p>
+                    <p className="text-sm text-muted-foreground">Supported formats: .pdf, .docx</p>
+                  </label>
                 </div>
-                <p className="text-lg font-medium mb-1">
-                  {isDragging ? "Drop files here" : "Click to browse or drag and drop"}
-                </p>
-                <p className="text-sm text-muted-foreground">Supported formats: .pdf, .docx</p>
-              </label>
-            </div>
+              </TabsContent>
+
+              {/* ── Merged mode drop zone ── */}
+              <TabsContent value="merged">
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "border-2 border-dashed rounded-lg p-12 text-center transition-all duration-300",
+                    isDragging ? "border-primary bg-primary/5 glow-amber" : "border-border hover:border-primary/50",
+                    files.length >= 1 && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileChange}
+                    disabled={files.length >= 1 || isUploading}
+                    className="hidden"
+                    id="file-upload-merged"
+                  />
+                  <label
+                    htmlFor="file-upload-merged"
+                    className={cn(
+                      "flex flex-col items-center cursor-pointer",
+                      files.length >= 1 && "cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 text-primary">
+                      <Files className="w-8 h-8" />
+                    </div>
+                    <p className="text-lg font-medium mb-1">
+                      {isDragging ? "Drop PDF here" : "Upload a merged PDF"}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Single PDF containing multiple candidate resumes
+                    </p>
+                  </label>
+                </div>
+              </TabsContent>
+            </Tabs>
 
             {/* ── Scoring Weights ── */}
             <div className="p-4 border border-border/50 rounded-lg bg-muted/5 space-y-5">
@@ -414,13 +476,17 @@ const UploadPage = () => {
             {/* ── File list ── */}
             <div>
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-primary">Selected Files</h3>
-                <span className={cn(
-                  "text-xs font-mono",
-                  files.length >= 10 ? "text-destructive" : "text-muted-foreground"
-                )}>
-                  {files.length} / 10 resumes selected
-                </span>
+                <h3 className="text-sm font-bold uppercase tracking-widest text-primary">
+                  {isMerged ? "Selected File" : "Selected Files"}
+                </h3>
+                {!isMerged && (
+                  <span className={cn(
+                    "text-xs font-mono",
+                    files.length >= 100 ? "text-destructive" : "text-muted-foreground"
+                  )}>
+                    {files.length} / 100 resumes selected
+                  </span>
+                )}
               </div>
 
               {files.length === 0 ? (
@@ -476,10 +542,10 @@ const UploadPage = () => {
                 {isUploading ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Analyzing...
+                    {isMerged ? "Splitting & Analyzing..." : "Analyzing..."}
                   </span>
                 ) : (
-                  "[ run analysis ]"
+                  isMerged ? "[ split & analyze ]" : "[ run analysis ]"
                 )}
               </button>
             </div>

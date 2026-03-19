@@ -50,6 +50,7 @@ from v2.schemas import (
     BatchStatusResponse,
     BatchItemStatus,
     BatchUploadResponse,
+    SplitSummary,
     CandidateRepoDetail,
     CandidateDetailResponse,
     TechStackLanguage,
@@ -496,21 +497,59 @@ async def upload_batch(
     priorities: str = Form(None),       # Legacy: comma-separated or JSON. Kept for backward compat.
     scoring_config: str = Form(None),   # New: JSON-encoded ScoringConfig object.
     use_generic_questions: str = Form(None),
+    upload_mode: str = Form("individual"),  # "individual" | "merged"
 ):
     """
     Upload a batch of resumes for background processing.
+    upload_mode="merged" accepts a single PDF containing multiple resumes and splits it.
     If scoring_config is provided it takes precedence over priorities.
     priorities is kept for backward compatibility with old clients.
     """
-    # 1. Validation: Max 10 files
-    if len(resumes) > 10:
-        raise HTTPException(status_code=400, detail="Maximum 10 files allowed per batch.")
+    if upload_mode not in ("individual", "merged"):
+        raise HTTPException(status_code=400, detail="upload_mode must be 'individual' or 'merged'.")
 
-    # 2. Validation: Extensions
-    for resume in resumes:
-        ext = Path(resume.filename).suffix.lower()
-        if ext not in [".pdf", ".docx"]:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Only .pdf and .docx allowed.")
+    # ── Merged mode: split a single PDF into multiple candidates ──
+    split_summary = None
+    split_segments = None
+
+    if upload_mode == "merged":
+        if len(resumes) != 1:
+            raise HTTPException(status_code=400, detail="Merged mode requires exactly 1 PDF file.")
+        ext = Path(resumes[0].filename).suffix.lower()
+        if ext != ".pdf":
+            raise HTTPException(status_code=400, detail="Merged mode only supports PDF files.")
+
+        content = await resumes[0].read()
+
+        from v2.merged_pdf_splitter import split_merged_pdf
+        result = await split_merged_pdf(content)
+
+        if not result.segments:
+            raise HTTPException(status_code=422, detail="No resumes could be extracted from the merged PDF.")
+        if len(result.segments) > 100:
+            raise HTTPException(status_code=400, detail=f"Merged PDF contains {len(result.segments)} resumes. Maximum is 100.")
+
+        split_segments = result.segments
+        split_summary = SplitSummary(
+            resumes_found=len(result.segments),
+            duplicates_removed=len(result.duplicates_removed),
+            noise_pages_discarded=len(result.discarded_pages),
+            total_pages=len(result.discarded_pages) + sum(
+                s.page_range[1] - s.page_range[0] + 1 for s in result.segments
+            ),
+            warnings=result.warnings,
+        )
+
+    else:
+        # ── Individual mode validation ──
+        if len(resumes) > 100:
+            raise HTTPException(status_code=400, detail="Maximum 100 files allowed per batch.")
+        for resume in resumes:
+            ext = Path(resume.filename).suffix.lower()
+            if ext not in [".pdf", ".docx"]:
+                raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Only .pdf and .docx allowed.")
+
+    # ── Shared: parse priorities and scoring config ──
 
     # Parse legacy priorities (still used by the single-repo /analyze-stream flow)
     priority_list = DEFAULT_PRIORITIES
@@ -542,33 +581,53 @@ async def upload_batch(
     import uuid
     batch_id = str(uuid.uuid4())
 
+    total_items = len(split_segments) if split_segments else len(resumes)
+
     with Session(engine) as session:
-        # 3. Create BatchJob
+        # Create BatchJob
         batch_job = BatchJob(
             id=batch_id,
-            total_items=len(resumes),
+            total_items=total_items,
             status="pending",
             priorities=json.dumps(priority_list),
             scoring_config=json.dumps(scoring_config_dict),
             use_generic_questions=generic_questions_flag,
+            upload_mode=upload_mode,
         )
         session.add(batch_job)
 
-        # 4. Create BatchItems
-        for i, resume in enumerate(resumes):
-            content = await resume.read()
-            item = BatchItem(
-                batch_job_id=batch_id,
-                position=i,
-                filename=resume.filename,
-                file_bytes=content,
-                file_ext=Path(resume.filename).suffix.lower(),
-                status="pending"
-            )
-            session.add(item)
+        # Create BatchItems
+        if split_segments:
+            # Merged mode: one BatchItem per split segment
+            for i, segment in enumerate(split_segments):
+                confidence_str = "high" if segment.confidence >= 0.7 else "low"
+                item = BatchItem(
+                    batch_job_id=batch_id,
+                    position=i,
+                    filename=f"{segment.candidate_name}_p{segment.page_range[0]+1}-{segment.page_range[1]+1}.pdf",
+                    candidate_name=segment.candidate_name,
+                    file_bytes=segment.pdf_bytes,
+                    file_ext=".pdf",
+                    status="pending",
+                    split_confidence=confidence_str,
+                )
+                session.add(item)
+        else:
+            # Individual mode: one BatchItem per uploaded file
+            for i, resume in enumerate(resumes):
+                content = await resume.read()
+                item = BatchItem(
+                    batch_job_id=batch_id,
+                    position=i,
+                    filename=resume.filename,
+                    file_bytes=content,
+                    file_ext=Path(resume.filename).suffix.lower(),
+                    status="pending",
+                )
+                session.add(item)
 
         session.commit()
-        
+
         item_ids = [item.id for item in session.query(BatchItem)
                     .filter(BatchItem.batch_job_id == batch_id)
                     .order_by(BatchItem.position)
@@ -591,7 +650,7 @@ async def upload_batch(
         # Fallback: asyncio background task (current behavior)
         background_tasks.add_task(process_batch, batch_id, priority_list, generic_questions_flag)
 
-    return BatchUploadResponse(batch_id=batch_id)
+    return BatchUploadResponse(batch_id=batch_id, split_summary=split_summary)
 
 
 @app.get("/batch/{batch_id}/status", response_model=BatchStatusResponse)
@@ -645,6 +704,7 @@ def get_batch_status(request: Request, batch_id: str):
                 verdict=verdict,
                 standout_features=standout_features,
                 overall_score=overall_score,
+                split_confidence=item.split_confidence,
             ))
             
         return BatchStatusResponse(
@@ -653,7 +713,8 @@ def get_batch_status(request: Request, batch_id: str):
             total_items=batch_job.total_items,
             completed_items=completed_count,
             status=batch_job.status,
-            items=item_statuses
+            upload_mode=batch_job.upload_mode,
+            items=item_statuses,
         )
 
 

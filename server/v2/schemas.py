@@ -342,6 +342,7 @@ class BatchItemStatus(BaseModel):
     verdict: Verdict | None
     standout_features: list[str] = Field(default_factory=list)
     overall_score: int | None = None
+    split_confidence: str | None = None  # "high" | "low" | None (merged uploads only)
 
 
 class BatchStatusResponse(BaseModel):
@@ -351,12 +352,23 @@ class BatchStatusResponse(BaseModel):
     total_items: int
     completed_items: int
     status: str  # "pending" | "running" | "completed"
+    upload_mode: str | None = None  # "individual" | "merged"
     items: list[BatchItemStatus]
+
+
+class SplitSummary(BaseModel):
+    """Summary of merged PDF splitting results"""
+    resumes_found: int
+    duplicates_removed: int
+    noise_pages_discarded: int
+    total_pages: int
+    warnings: list[str] = Field(default_factory=list)
 
 
 class BatchUploadResponse(BaseModel):
     """Response for POST /batch/upload"""
     batch_id: str
+    split_summary: SplitSummary | None = None  # Only populated for merged uploads
 
 
 class CandidateRepoDetail(BaseModel):

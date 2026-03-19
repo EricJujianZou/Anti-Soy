@@ -128,6 +128,7 @@ class BatchJob(Base):
     priorities = Column(Text) # Store as JSON array
     scoring_config = Column(Text, nullable=True)  # JSON: ScoringConfig object (nullable for backward compat)
     use_generic_questions = Column(Boolean, default=False, nullable=False)
+    upload_mode = Column(String, default="individual", nullable=True)  # "individual" | "merged"
 
     # Relationship to batch items
     items = relationship("BatchItem", back_populates="batch_job", cascade="all, delete-orphan", order_by="BatchItem.position")
@@ -151,6 +152,7 @@ class BatchItem(Base):
     error_message = Column(Text)
     file_bytes = Column(LargeBinary)
     file_ext = Column(String) # .pdf or .docx
+    split_confidence = Column(String, nullable=True)  # "high" | "low" | None (merged uploads only)
     repo_id = Column(Integer, ForeignKey("repos.id", ondelete="SET NULL"))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime)

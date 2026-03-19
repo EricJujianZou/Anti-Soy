@@ -19,6 +19,7 @@ export interface BatchItemStatus {
   verdict?: BatchVerdict | null;
   standout_features?: string[];
   overall_score?: number | null;
+  split_confidence?: string | null; // "high" | "low" | null (merged uploads only)
 }
 
 export interface BatchStatusResponse {
@@ -26,21 +27,33 @@ export interface BatchStatusResponse {
   status: "pending" | "processing" | "completed" | "failed";
   total_items: number;
   completed_items: number;
+  upload_mode?: string | null; // "individual" | "merged"
   items: BatchItemStatus[];
   priorities?: PriorityKey[];
+}
+
+export interface SplitSummary {
+  resumes_found: number;
+  duplicates_removed: number;
+  noise_pages_discarded: number;
+  total_pages: number;
+  warnings: string[];
 }
 
 export async function uploadBatch(
   files: File[],
   scoringConfig?: ScoringConfig,
   useGenericQuestions?: boolean,
+  uploadMode: "individual" | "merged" = "individual",
   // Legacy param — kept for backward compat but ignored when scoringConfig is provided
   priorities?: PriorityKey[],
-): Promise<{ batch_id: string }> {
+): Promise<{ batch_id: string; split_summary?: SplitSummary }> {
   const formData = new FormData();
   files.forEach((file) => {
     formData.append("resumes", file);
   });
+
+  formData.append("upload_mode", uploadMode);
 
   if (scoringConfig) {
     formData.append("scoring_config", JSON.stringify(scoringConfig));
