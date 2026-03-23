@@ -106,16 +106,7 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
-
-@app.exception_handler(RateLimitExceeded)
-async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "Too many requests. Please try again later."},
-    )
-
-
-# CORS middleware
+# CORS
 ALLOWED_ORIGINS = [
     "https://antisoy.com",
     "https://www.antisoy.com",
@@ -136,6 +127,33 @@ app.add_middleware(
     allow_headers=["Content-Type"],
     expose_headers=["X-Resume-Count"],
 )
+
+
+def _cors_headers(request: Request) -> dict:
+    """Return CORS origin header for error responses that bypass middleware."""
+    origin = request.headers.get("origin", "")
+    if origin in ALLOWED_ORIGINS:
+        return {"Access-Control-Allow-Origin": origin}
+    return {}
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please try again later."},
+        headers=_cors_headers(request),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled exception on {request.method} {request.url.path}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=_cors_headers(request),
+    )
 
 
 # =============================================================================
