@@ -50,6 +50,7 @@ from v2.schemas import (
     BatchStatusResponse,
     BatchItemStatus,
     BatchUploadResponse,
+    SplitSummary,
     CandidateRepoDetail,
     CandidateDetailResponse,
     TechStackLanguage,
@@ -74,8 +75,8 @@ from v2.analysis_service import (
     run_questions_from_db,
     run_multi_repo_questions,
     compute_composite_score,
+    compute_score_breakdown,
     compute_candidate_score,
-    compute_tech_match_penalty,
     aggregate_tech_stack,
 )
 
@@ -199,13 +200,29 @@ def build_evaluate_response(repo: Repo, repo_evaluation: RepoEvaluation) -> Eval
 
 
 def _load_scoring_config(batch_job: BatchJob) -> dict:
-    """Load ScoringConfig dict from BatchJob, falling back to defaults for old batches."""
+    """Load ScoringConfig dict from BatchJob, falling back to defaults for old batches.
+
+    Backward compat: old batches stored weights as 0.0-1.0 floats (4 categories).
+    Detect this and replace with new percentage defaults (5 categories summing to 100).
+    """
+    defaults = ScoringConfig().model_dump()
     if batch_job and batch_job.scoring_config:
         try:
-            return json.loads(batch_job.scoring_config)
+            cfg = json.loads(batch_job.scoring_config)
         except Exception:
-            pass
-    return ScoringConfig().model_dump()
+            return defaults
+
+        # Detect old-format weights: all values are floats <= 1.0 and no tech_match key
+        weights = cfg.get("weights", {})
+        if weights and "tech_match" not in weights:
+            all_old_format = all(
+                isinstance(v, (int, float)) and v <= 1.0
+                for v in weights.values()
+            )
+            if all_old_format:
+                cfg["weights"] = defaults["weights"]
+        return cfg
+    return defaults
 
 
 def _compute_overall_score(repo_analysis: RepoAnalysis, repo_evaluation: RepoEvaluation) -> int:
@@ -226,19 +243,17 @@ def _compute_overall_score(repo_analysis: RepoAnalysis, repo_evaluation: RepoEva
     return score
 
 
-def _compute_repo_composite(repo_analysis: RepoAnalysis, repo_evaluation: RepoEvaluation, scoring_config_dict: dict) -> int:
-    """
-    Compute composite score for a single repo using the batch's scoring config.
-    Falls back to legacy scoring for old batches (no scoring_config on BatchJob).
-    """
+def _repo_scoring_args(repo: Repo, scoring_config_dict: dict) -> dict:
+    """Extract the common kwargs for compute_composite_score / compute_score_breakdown."""
+    repo_analysis = repo.repo_analysis
+    repo_evaluation = repo.repo_evaluation
+
     bv = {}
     if repo_evaluation and repo_evaluation.business_value:
         try:
             bv = json.loads(repo_evaluation.business_value)
         except Exception:
             pass
-
-    originality_score = bv.get("originality_score", 0.5)
 
     bad_practices_findings = []
     if repo_analysis and repo_analysis.bad_practices_data:
@@ -248,18 +263,104 @@ def _compute_repo_composite(repo_analysis: RepoAnalysis, repo_evaluation: RepoEv
         except Exception:
             pass
 
-    # Tech match penalty: not recomputed at read time (no stored dependencies here),
-    # so we pass 0.0 — penalty was already factored into the per-repo score during processing.
-    return compute_composite_score(
+    repo_languages = {}
+    if repo.languages:
+        try:
+            repo_languages = json.loads(repo.languages)
+        except Exception:
+            pass
+    repo_dependencies = []
+    if repo.dependencies:
+        try:
+            repo_dependencies = json.loads(repo.dependencies)
+        except Exception:
+            pass
+
+    return dict(
         ai_slop_score=repo_analysis.ai_slop_score,
         bad_practices_score=repo_analysis.bad_practices_score,
         code_quality_score=repo_analysis.code_quality_score,
-        originality_score=originality_score,
+        originality_score=bv.get("originality_score", 0.5),
         bad_practices_findings=bad_practices_findings,
         scoring_config=scoring_config_dict,
-        shipped_to_prod=False,  # Not re-detected at read time; safe default
-        tech_match_penalty=0.0,
+        shipped_to_prod=bool(repo_analysis.shipped_to_prod),
+        repo_languages=repo_languages,
+        repo_dependencies=repo_dependencies,
     )
+
+
+def _compute_repo_composite(repo: Repo, scoring_config_dict: dict) -> int:
+    """Compute composite score for a single repo using the batch's scoring config."""
+    return compute_composite_score(**_repo_scoring_args(repo, scoring_config_dict))
+
+
+def _get_repo_score_breakdown(repo: Repo, scoring_config_dict: dict) -> dict:
+    """Get full score breakdown for a single repo (used by detail endpoint)."""
+    return compute_score_breakdown(**_repo_scoring_args(repo, scoring_config_dict))
+
+
+def _compute_candidate_overall_score(
+    session: Session,
+    item: BatchItem,
+    scoring_config_dict: dict,
+    use_composite: bool,
+) -> tuple[int | None, list[tuple[Repo, int, bool]]]:
+    """
+    Compute the overall candidate score across all repos.
+    Returns (overall_score, list of (repo, per_repo_score, is_matched) tuples).
+    Used by both the batch status and candidate detail endpoints for consistency.
+    """
+    # Collect repo IDs + is_matched — join table preferred, fall back to primary repo
+    batch_repos = (
+        session.query(BatchItemRepo)
+        .filter(BatchItemRepo.batch_item_id == item.id)
+        .order_by(BatchItemRepo.position)
+        .all()
+    )
+    if batch_repos:
+        repo_ids = [br.repo_id for br in batch_repos]
+        repo_matched_map = {br.repo_id: bool(br.is_matched) for br in batch_repos}
+    elif item.repo_id:
+        repo_ids = [item.repo_id]
+        repo_matched_map = {item.repo_id: False}
+    else:
+        return None, []
+
+    all_repos = (
+        session.query(Repo)
+        .options(joinedload(Repo.repo_analysis), joinedload(Repo.repo_evaluation))
+        .filter(Repo.id.in_(repo_ids))
+        .all()
+    )
+
+    scores: list[int] = []
+    repo_is_matched: list[bool] = []
+    scored_repos: list[tuple[Repo, int, bool]] = []
+
+    for repo in all_repos:
+        if not repo.repo_analysis or not repo.repo_evaluation:
+            continue
+
+        is_matched = repo_matched_map.get(repo.id, False)
+
+        if use_composite:
+            score = _compute_repo_composite(repo, scoring_config_dict)
+        else:
+            score = _compute_overall_score(repo.repo_analysis, repo.repo_evaluation)
+
+        scores.append(score)
+        repo_is_matched.append(is_matched)
+        scored_repos.append((repo, score, is_matched))
+
+    if not scores:
+        return None, scored_repos
+
+    if use_composite:
+        overall = compute_candidate_score(scores, repo_is_matched)
+    else:
+        overall = round(sum(scores) / len(scores))
+
+    return overall, scored_repos
 
 
 # =============================================================================
@@ -396,21 +497,59 @@ async def upload_batch(
     priorities: str = Form(None),       # Legacy: comma-separated or JSON. Kept for backward compat.
     scoring_config: str = Form(None),   # New: JSON-encoded ScoringConfig object.
     use_generic_questions: str = Form(None),
+    upload_mode: str = Form("individual"),  # "individual" | "merged"
 ):
     """
     Upload a batch of resumes for background processing.
+    upload_mode="merged" accepts a single PDF containing multiple resumes and splits it.
     If scoring_config is provided it takes precedence over priorities.
     priorities is kept for backward compatibility with old clients.
     """
-    # 1. Validation: Max 10 files
-    if len(resumes) > 10:
-        raise HTTPException(status_code=400, detail="Maximum 10 files allowed per batch.")
+    if upload_mode not in ("individual", "merged"):
+        raise HTTPException(status_code=400, detail="upload_mode must be 'individual' or 'merged'.")
 
-    # 2. Validation: Extensions
-    for resume in resumes:
-        ext = Path(resume.filename).suffix.lower()
-        if ext not in [".pdf", ".docx"]:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Only .pdf and .docx allowed.")
+    # ── Merged mode: split a single PDF into multiple candidates ──
+    split_summary = None
+    split_segments = None
+
+    if upload_mode == "merged":
+        if len(resumes) != 1:
+            raise HTTPException(status_code=400, detail="Merged mode requires exactly 1 PDF file.")
+        ext = Path(resumes[0].filename).suffix.lower()
+        if ext != ".pdf":
+            raise HTTPException(status_code=400, detail="Merged mode only supports PDF files.")
+
+        content = await resumes[0].read()
+
+        from v2.merged_pdf_splitter import split_merged_pdf
+        result = await split_merged_pdf(content)
+
+        if not result.segments:
+            raise HTTPException(status_code=422, detail="No resumes could be extracted from the merged PDF.")
+        if len(result.segments) > 100:
+            raise HTTPException(status_code=400, detail=f"Merged PDF contains {len(result.segments)} resumes. Maximum is 100.")
+
+        split_segments = result.segments
+        split_summary = SplitSummary(
+            resumes_found=len(result.segments),
+            duplicates_removed=len(result.duplicates_removed),
+            noise_pages_discarded=len(result.discarded_pages),
+            total_pages=len(result.discarded_pages) + sum(
+                s.page_range[1] - s.page_range[0] + 1 for s in result.segments
+            ),
+            warnings=result.warnings,
+        )
+
+    else:
+        # ── Individual mode validation ──
+        if len(resumes) > 100:
+            raise HTTPException(status_code=400, detail="Maximum 100 files allowed per batch.")
+        for resume in resumes:
+            ext = Path(resume.filename).suffix.lower()
+            if ext not in [".pdf", ".docx"]:
+                raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Only .pdf and .docx allowed.")
+
+    # ── Shared: parse priorities and scoring config ──
 
     # Parse legacy priorities (still used by the single-repo /analyze-stream flow)
     priority_list = DEFAULT_PRIORITIES
@@ -442,33 +581,53 @@ async def upload_batch(
     import uuid
     batch_id = str(uuid.uuid4())
 
+    total_items = len(split_segments) if split_segments else len(resumes)
+
     with Session(engine) as session:
-        # 3. Create BatchJob
+        # Create BatchJob
         batch_job = BatchJob(
             id=batch_id,
-            total_items=len(resumes),
+            total_items=total_items,
             status="pending",
             priorities=json.dumps(priority_list),
             scoring_config=json.dumps(scoring_config_dict),
             use_generic_questions=generic_questions_flag,
+            upload_mode=upload_mode,
         )
         session.add(batch_job)
 
-        # 4. Create BatchItems
-        for i, resume in enumerate(resumes):
-            content = await resume.read()
-            item = BatchItem(
-                batch_job_id=batch_id,
-                position=i,
-                filename=resume.filename,
-                file_bytes=content,
-                file_ext=Path(resume.filename).suffix.lower(),
-                status="pending"
-            )
-            session.add(item)
+        # Create BatchItems
+        if split_segments:
+            # Merged mode: one BatchItem per split segment
+            for i, segment in enumerate(split_segments):
+                confidence_str = "high" if segment.confidence >= 0.7 else "low"
+                item = BatchItem(
+                    batch_job_id=batch_id,
+                    position=i,
+                    filename=f"{segment.candidate_name}_p{segment.page_range[0]+1}-{segment.page_range[1]+1}.pdf",
+                    candidate_name=segment.candidate_name,
+                    file_bytes=segment.pdf_bytes,
+                    file_ext=".pdf",
+                    status="pending",
+                    split_confidence=confidence_str,
+                )
+                session.add(item)
+        else:
+            # Individual mode: one BatchItem per uploaded file
+            for i, resume in enumerate(resumes):
+                content = await resume.read()
+                item = BatchItem(
+                    batch_job_id=batch_id,
+                    position=i,
+                    filename=resume.filename,
+                    file_bytes=content,
+                    file_ext=Path(resume.filename).suffix.lower(),
+                    status="pending",
+                )
+                session.add(item)
 
         session.commit()
-        
+
         item_ids = [item.id for item in session.query(BatchItem)
                     .filter(BatchItem.batch_job_id == batch_id)
                     .order_by(BatchItem.position)
@@ -491,7 +650,7 @@ async def upload_batch(
         # Fallback: asyncio background task (current behavior)
         background_tasks.add_task(process_batch, batch_id, priority_list, generic_questions_flag)
 
-    return BatchUploadResponse(batch_id=batch_id)
+    return BatchUploadResponse(batch_id=batch_id, split_summary=split_summary)
 
 
 @app.get("/batch/{batch_id}/status", response_model=BatchStatusResponse)
@@ -528,30 +687,10 @@ def get_batch_status(request: Request, batch_id: str):
                 if item.repo.repo_evaluation:
                     standout_features = json.loads(item.repo.repo_evaluation.standout_features)
 
-                # Compute overall score — composite for new batches, legacy for old ones
-                if item.repo.repo_analysis and item.repo.repo_evaluation:
-                    if use_composite:
-                        # For the list view, compute composite across all repos for this candidate
-                        batch_repos = (
-                            session.query(BatchItemRepo)
-                            .filter(BatchItemRepo.batch_item_id == item.id)
-                            .all()
-                        )
-                        repo_ids = [br.repo_id for br in batch_repos] if batch_repos else ([item.repo_id] if item.repo_id else [])
-                        all_repos = (
-                            session.query(Repo)
-                            .options(joinedload(Repo.repo_analysis), joinedload(Repo.repo_evaluation))
-                            .filter(Repo.id.in_(repo_ids))
-                            .all()
-                        ) if len(repo_ids) > 1 else [item.repo]
-
-                        repo_scores = []
-                        for r in all_repos:
-                            if r.repo_analysis and r.repo_evaluation:
-                                repo_scores.append(_compute_repo_composite(r.repo_analysis, r.repo_evaluation, scoring_config_dict))
-                        overall_score = compute_candidate_score(repo_scores) if repo_scores else None
-                    else:
-                        overall_score = _compute_overall_score(item.repo.repo_analysis, item.repo.repo_evaluation)
+                # Compute overall score — shared helper ensures consistency with detail view
+                overall_score, _ = _compute_candidate_overall_score(
+                    session, item, scoring_config_dict, use_composite
+                )
 
             item_statuses.append(BatchItemStatus(
                 id=item.id,
@@ -565,6 +704,7 @@ def get_batch_status(request: Request, batch_id: str):
                 verdict=verdict,
                 standout_features=standout_features,
                 overall_score=overall_score,
+                split_confidence=item.split_confidence,
             ))
             
         return BatchStatusResponse(
@@ -573,7 +713,8 @@ def get_batch_status(request: Request, batch_id: str):
             total_items=batch_job.total_items,
             completed_items=completed_count,
             status=batch_job.status,
-            items=item_statuses
+            upload_mode=batch_job.upload_mode,
+            items=item_statuses,
         )
 
 
@@ -594,61 +735,43 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
         if item.status != "completed":
             raise HTTPException(status_code=400, detail=f"Candidate analysis not yet complete (status: {item.status})")
 
-        # Collect repo IDs — join table preferred; fall back to primary repo for legacy items.
-        batch_repos = (
-            session.query(BatchItemRepo)
-            .filter(BatchItemRepo.batch_item_id == item.id)
-            .order_by(BatchItemRepo.position)
-            .all()
-        )
-        repo_ids = [br.repo_id for br in batch_repos] if batch_repos else ([item.repo_id] if item.repo_id else [])
-
-        if not repo_ids:
-            raise HTTPException(status_code=404, detail="No analyzed repositories found for this candidate")
-
-        # Single query with eager-loaded relationships — eliminates N+1 lazy-load round trips
-        repos_map = {
-            r.id: r
-            for r in session.query(Repo)
-            .options(
-                joinedload(Repo.repo_analysis),
-                joinedload(Repo.repo_evaluation),
-                joinedload(Repo.user),
-            )
-            .filter(Repo.id.in_(repo_ids))
-            .all()
-        }
-
         # Load scoring config for this batch
         batch_job_for_detail = session.query(BatchJob).filter(BatchJob.id == batch_id).first()
         scoring_config_dict = _load_scoring_config(batch_job_for_detail)
         use_composite = bool(batch_job_for_detail and batch_job_for_detail.scoring_config)
 
+        # Use shared helper for consistent scoring with batch status endpoint
+        overall_score, scored_repos = _compute_candidate_overall_score(
+            session, item, scoring_config_dict, use_composite
+        )
+
+        if not scored_repos:
+            raise HTTPException(status_code=404, detail="No completed repo analyses found for this candidate")
+
         repo_details: list[CandidateRepoDetail] = []
-        scores: list[int] = []
-        repo_tech_relevance: list[float] = []
         tech_repos_for_aggregation: list[dict] = []
 
-        w_ai = scoring_config_dict.get("weights", {}).get("ai_detection", 0.7)
+        # Compute per-repo weights for transparency
+        n_repos = len(scored_repos)
+        match_flags = [is_m for _, _, is_m in scored_repos]
+        m_count = sum(1 for f in match_flags if f)
+        u_count = n_repos - m_count
+        if m_count == 0 or m_count == n_repos or n_repos == 0:
+            repo_weights = [round(100.0 / max(1, n_repos), 1)] * n_repos
+        else:
+            matched_each = 40.0
+            if m_count * matched_each > 80:
+                matched_each = 80.0 / m_count
+            unmatched_each = (100.0 - m_count * matched_each) / u_count
+            repo_weights = [
+                round(matched_each, 1) if is_m else round(unmatched_each, 1)
+                for _, _, is_m in scored_repos
+            ]
 
-        for repo_id in repo_ids:
-            repo = repos_map.get(repo_id)
-            if not repo or not repo.repo_analysis or not repo.repo_evaluation:
-                continue
-
+        for (repo, score, is_matched), weight in zip(scored_repos, repo_weights):
+            breakdown = None
             if use_composite:
-                score = _compute_repo_composite(repo.repo_analysis, repo.repo_evaluation, scoring_config_dict)
-                # Compute tech relevance for weighted candidate average
-                # tech_match_penalty not re-derived at read time (no deps stored), default to 0 for relevance
-                tech_penalty = 0.0
-                ai_slop = repo.repo_analysis.ai_slop_score
-                base_relevance = 1.0 - (tech_penalty / 100)
-                ai_discount = max(0.0, 1.0 - (ai_slop / 100) * w_ai)
-                repo_tech_relevance.append(base_relevance * ai_discount)
-            else:
-                score = _compute_overall_score(repo.repo_analysis, repo.repo_evaluation)
-
-            scores.append(score)
+                breakdown = _get_repo_score_breakdown(repo, scoring_config_dict)
             repo_details.append(CandidateRepoDetail(
                 repo_id=repo.id,
                 repo_url=repo.github_link,
@@ -656,6 +779,9 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
                 overall_score=score,
                 analysis=build_analysis_response(repo, repo.repo_analysis),
                 evaluation=build_evaluate_response(repo, repo.repo_evaluation),
+                score_breakdown=breakdown,
+                repo_weight=weight,
+                is_matched=is_matched,
             ))
 
             # Collect data for tech stack aggregation
@@ -671,14 +797,6 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
                 "ai_slop_score": repo.repo_analysis.ai_slop_score,
             })
 
-        if not repo_details:
-            raise HTTPException(status_code=404, detail="No completed repo analyses found for this candidate")
-
-        if use_composite and scores:
-            overall_score = compute_candidate_score(scores, repo_tech_relevance if repo_tech_relevance else None)
-        else:
-            overall_score = round(sum(scores) / len(scores))
-
         # Build tech stack breakdown
         tech_stack_breakdown = None
         if tech_repos_for_aggregation:
@@ -687,9 +805,11 @@ def get_candidate_detail(request: Request, batch_id: str, item_id: int):
 
         # Questions cached on the primary User — candidate-scoped, persists across batch runs
         interview_questions = None
-        primary_repo = repos_map.get(repo_ids[0]) if repo_ids else None
-        if primary_repo and primary_repo.user and primary_repo.user.interview_questions:
-            interview_questions = json.loads(primary_repo.user.interview_questions)
+        if scored_repos:
+            # Eager-load user on the primary repo (shared helper doesn't load it)
+            primary_repo = session.query(Repo).options(joinedload(Repo.user)).get(scored_repos[0][0].id)
+            if primary_repo and primary_repo.user and primary_repo.user.interview_questions:
+                interview_questions = json.loads(primary_repo.user.interview_questions)
 
         return CandidateDetailResponse(
             item_id=item.id,
@@ -1121,7 +1241,7 @@ def check_compatibility(request: Request, body: CompatibilityRequest):
                 contents=[
                     {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]},
                 ],
-                config={"http_options": {"timeout": 30_000}, "temperature": 0.3},
+                config={"http_options": {"timeout": 30_000}, "temperature": 0},
             )
             narrative = response.text.strip()
     except Exception as e:

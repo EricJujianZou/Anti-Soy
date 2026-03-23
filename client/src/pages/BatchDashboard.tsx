@@ -111,6 +111,9 @@ const CandidateCard = ({ item, batchId, batchPriorities }: { item: BatchItemStat
           )}
           {isCompleted && item.overall_score == null && <VerdictBadge verdict={item.verdict} />}
           {isError && <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 uppercase tracking-widest text-[10px] font-bold">Unresolvable</Badge>}
+          {item.split_confidence === "low" && (
+            <Badge variant="outline" className="border-amber-500/40 text-amber-500 uppercase tracking-widest text-[10px] font-bold">Low confidence split</Badge>
+          )}
         </div>
 
         <div className="space-y-3">

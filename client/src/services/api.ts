@@ -137,10 +137,11 @@ export const PRIORITY_OPTIONS: { key: PriorityKey; label: string }[] = [
 // =============================================================================
 
 export interface ScoringWeights {
-  ai_detection: number;   // 0.0 - 1.0
-  security: number;       // 0.0 - 1.0
-  code_quality: number;   // 0.0 - 1.0
-  originality: number;    // 0.0 - 1.0
+  ai_detection: number;   // 0-100 percentage
+  security: number;       // 0-100 percentage
+  code_quality: number;   // 0-100 percentage
+  originality: number;    // 0-100 percentage
+  tech_match: number;     // 0-100 percentage
 }
 
 export interface ScoringConfig {
@@ -154,10 +155,11 @@ export interface ScoringConfig {
 
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   weights: {
-    ai_detection: 0.7,
-    security: 0.5,
-    code_quality: 0.5,
-    originality: 0.5,
+    ai_detection: 30,
+    security: 15,
+    code_quality: 25,
+    originality: 15,
+    tech_match: 15,
   },
   shipped_to_prod_bonus: true,
   required_tech: {

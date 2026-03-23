@@ -82,9 +82,9 @@ SECURITY_PATTERNS = [
         name="hardcoded_secret",
         category="security",
         severity=Severity.CRITICAL,
-        pattern=r'''(?:api[_-]?key|secret[_-]?key|password|passwd|token|auth[_-]?token|private[_-]?key)\s*[=:]\s*["\'][^"\']{8,}["\']''',
+        pattern=r'''(?:api[_-]?key|secret[_-]?key|password|passwd|auth[_-]?token|private[_-]?key)\s*[=:]\s*["\'][^"\']{8,}["\']''',
         file_pattern=None,
-        explanation="Hardcoded secret/API key detected. Use environment variables instead.",
+        explanation="Potential hardcoded secret/API key detected. Use environment variables instead.",
         negative_pattern=r'''(?:example|placeholder|your[_-]?|xxx|test|dummy|fake|sample)''',
     ),
     DetectionPattern(

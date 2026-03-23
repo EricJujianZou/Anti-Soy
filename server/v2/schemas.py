@@ -116,6 +116,23 @@ class StyleFeatures(BaseModel):
     redundant_comment_count: int = Field(..., ge=0, description="Number of redundant/obvious comments")
 
 
+class CategoryScore(BaseModel):
+    """Single category line item in the score breakdown (higher sub_score = better)."""
+    category: str
+    sub_score: int        # 0-100, higher = better
+    weight: int           # percentage (e.g., 30)
+    contribution: float   # sub_score * weight / 100
+
+
+class ScoreBreakdown(BaseModel):
+    """Full transparency into how a repo's composite score was computed."""
+    categories: list[CategoryScore]
+    weighted_sum: float                    # Σ(sub_score × weight/100), before shipped bonus
+    shipped_to_prod_bonus: bool
+    shipped_to_prod_multiplier: float | None  # 1.1 if applied, else None
+    final_score: int
+
+
 class AISlop(BaseModel):
     """AI Slop Detector results"""
     score: int = Field(..., ge=0, le=100, description="AI slop score (higher = more AI-like)")
@@ -203,11 +220,12 @@ DEFAULT_PRIORITIES = list(VALID_PRIORITIES)
 # =============================================================================
 
 class ScoringWeights(BaseModel):
-    """Slider weights for the 4 scoring dimensions (0.0 = lenient, 1.0 = strict)."""
-    ai_detection: float = Field(default=0.7, ge=0.0, le=1.0)
-    security: float = Field(default=0.5, ge=0.0, le=1.0)
-    code_quality: float = Field(default=0.5, ge=0.0, le=1.0)
-    originality: float = Field(default=0.5, ge=0.0, le=1.0)
+    """Percentage weights for the 5 scoring dimensions. Must sum to 100."""
+    ai_detection: int = Field(default=30, ge=0, le=100)
+    security: int = Field(default=15, ge=0, le=100)
+    code_quality: int = Field(default=25, ge=0, le=100)
+    originality: int = Field(default=15, ge=0, le=100)
+    tech_match: int = Field(default=15, ge=0, le=100)
 
 
 class RequiredTech(BaseModel):
@@ -324,6 +342,7 @@ class BatchItemStatus(BaseModel):
     verdict: Verdict | None
     standout_features: list[str] = Field(default_factory=list)
     overall_score: int | None = None
+    split_confidence: str | None = None  # "high" | "low" | None (merged uploads only)
 
 
 class BatchStatusResponse(BaseModel):
@@ -333,12 +352,23 @@ class BatchStatusResponse(BaseModel):
     total_items: int
     completed_items: int
     status: str  # "pending" | "running" | "completed"
+    upload_mode: str | None = None  # "individual" | "merged"
     items: list[BatchItemStatus]
+
+
+class SplitSummary(BaseModel):
+    """Summary of merged PDF splitting results"""
+    resumes_found: int
+    duplicates_removed: int
+    noise_pages_discarded: int
+    total_pages: int
+    warnings: list[str] = Field(default_factory=list)
 
 
 class BatchUploadResponse(BaseModel):
     """Response for POST /batch/upload"""
     batch_id: str
+    split_summary: SplitSummary | None = None  # Only populated for merged uploads
 
 
 class CandidateRepoDetail(BaseModel):
@@ -349,6 +379,9 @@ class CandidateRepoDetail(BaseModel):
     overall_score: int
     analysis: AnalysisResponse
     evaluation: EvaluateResponse
+    score_breakdown: ScoreBreakdown | None = None
+    repo_weight: float | None = None   # percentage weight in candidate-level aggregation
+    is_matched: bool | None = None     # True if repo matched a resume project
 
 
 class CandidateDetailResponse(BaseModel):

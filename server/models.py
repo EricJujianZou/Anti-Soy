@@ -39,6 +39,7 @@ class Repo(Base):
     repo_name = Column(String, nullable=False)
     stars = Column(Integer, default=0)
     languages = Column(Text)  # JSON stored as TEXT
+    dependencies = Column(Text, default="[]", server_default="[]")  # JSON: list of package names
 
     # Relationships
     user = relationship("User", back_populates="repos")
@@ -77,6 +78,9 @@ class RepoAnalysis(Base):
 
     # Files Analyzed
     files_analyzed = Column(Text, nullable=False)  # JSON: List of FileAnalyzed objects
+
+    # Scoring signal computed during batch processing, persisted for read-time scoring
+    shipped_to_prod = Column(Boolean, default=False, server_default="false")
 
     # Relationship
     repo = relationship("Repo", back_populates="repo_analysis")
@@ -124,6 +128,7 @@ class BatchJob(Base):
     priorities = Column(Text) # Store as JSON array
     scoring_config = Column(Text, nullable=True)  # JSON: ScoringConfig object (nullable for backward compat)
     use_generic_questions = Column(Boolean, default=False, nullable=False)
+    upload_mode = Column(String, default="individual", nullable=True)  # "individual" | "merged"
 
     # Relationship to batch items
     items = relationship("BatchItem", back_populates="batch_job", cascade="all, delete-orphan", order_by="BatchItem.position")
@@ -147,6 +152,7 @@ class BatchItem(Base):
     error_message = Column(Text)
     file_bytes = Column(LargeBinary)
     file_ext = Column(String) # .pdf or .docx
+    split_confidence = Column(String, nullable=True)  # "high" | "low" | None (merged uploads only)
     repo_id = Column(Integer, ForeignKey("repos.id", ondelete="SET NULL"))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime)
@@ -170,8 +176,10 @@ class BatchItemRepo(Base):
     position = Column(Integer, nullable=False, default=0)  # 0 = primary repo
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    is_matched = Column(Boolean, default=False, nullable=False)  # True if repo matched a resume project
+
     batch_item = relationship("BatchItem", back_populates="batch_repos")
     repo = relationship("Repo")
 
     def __repr__(self):
-        return f"<BatchItemRepo(batch_item_id={self.batch_item_id}, repo_id={self.repo_id}, position={self.position})>"
+        return f"<BatchItemRepo(batch_item_id={self.batch_item_id}, repo_id={self.repo_id}, position={self.position}, is_matched={self.is_matched})>"

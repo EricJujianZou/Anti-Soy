@@ -17,7 +17,7 @@ from v2.cross_reference import cross_reference, CandidateInput
 from v2.analysis_service import (
     run_analysis_pipeline, save_analysis_results,
     run_evaluation_pipeline, save_evaluation_results,
-    compute_composite_score, compute_tech_match_penalty,
+    compute_composite_score,
     aggregate_tech_stack,
 )
 from v2.data_extractor import detect_deployment_signals
@@ -170,6 +170,9 @@ async def process_single_item(item_id: int, batch_id: str, priorities: Optional[
                 primary_repo_id: int | None = None
                 primary_user = None
 
+                # Build set of matched repo URLs for is_matched tagging
+                matched_urls = {mp.repo_url for mp in person.matched_projects}
+
                 for repo_position, repo_url in enumerate(person.repos_to_clone):
                     url_parts = repo_url.rstrip("/").split("/")
                     repo_username = url_parts[-2]
@@ -196,6 +199,7 @@ async def process_single_item(item_id: int, batch_id: str, priorities: Optional[
                             batch_item_id=item.id,
                             repo_id=repo.id,
                             position=repo_position,
+                            is_matched=repo_url in matched_urls,
                         ))
                         session.commit()
 
@@ -207,10 +211,16 @@ async def process_single_item(item_id: int, batch_id: str, priorities: Optional[
                     try:
                         effective_priorities = priorities or DEFAULT_PRIORITIES
                         extracted_data, ai_slop, bad_practices, code_quality, verdict = run_analysis_pipeline(repo_url)
-                        save_analysis_results(session, repo.id, extracted_data, ai_slop, bad_practices, code_quality, verdict)
 
                         # Detect deployment signals from already-extracted data (no re-clone)
                         deployment = detect_deployment_signals(extracted_data)
+                        shipped_to_prod = deployment.get("shipped_to_prod", False)
+
+                        # Persist analysis + scoring signals
+                        save_analysis_results(
+                            session, repo.id, extracted_data, ai_slop, bad_practices, code_quality, verdict,
+                            shipped_to_prod=shipped_to_prod,
+                        )
 
                         bv, sf, ir, rr, iq = run_evaluation_pipeline(
                             repo_url, repo_name, ai_slop, bad_practices, code_quality, extracted_data, effective_priorities,
@@ -218,16 +228,7 @@ async def process_single_item(item_id: int, batch_id: str, priorities: Optional[
                         )
                         save_evaluation_results(session, repo.id, bv, sf, ir, rr, iq)
 
-                        # Compute tech match penalty for this repo
-                        required_tech = scoring_config_dict.get("required_tech", {})
-                        tech_penalty = compute_tech_match_penalty(
-                            repo_languages=extracted_data.languages or {},
-                            repo_dependencies=extracted_data.dependencies or [],
-                            ai_slop_score=ai_slop.score,
-                            required_tech=required_tech,
-                        )
-
-                        # Compute composite score for this repo (stored for candidate aggregation below)
+                        # Compute composite score for logging (actual scoring happens at read time)
                         import json as _json2
                         bad_practices_findings = []
                         try:
@@ -247,10 +248,11 @@ async def process_single_item(item_id: int, batch_id: str, priorities: Optional[
                             originality_score=originality_score,
                             bad_practices_findings=bad_practices_findings,
                             scoring_config=scoring_config_dict,
-                            shipped_to_prod=deployment.get("shipped_to_prod", False),
-                            tech_match_penalty=tech_penalty,
+                            shipped_to_prod=shipped_to_prod,
+                            repo_languages=extracted_data.languages or {},
+                            repo_dependencies=extracted_data.dependencies or [],
                         )
-                        logger.debug(f"Repo {repo_name}: composite_score={repo_composite}, shipped_to_prod={deployment.get('shipped_to_prod')}")
+                        logger.debug(f"Repo {repo_name}: composite_score={repo_composite}, shipped_to_prod={shipped_to_prod}")
                     except Exception as e:
                         logger.warning(f"Analysis failed for repo {repo_url} (item {item_id}): {e}")
                         session.rollback()  # Clear aborted transaction so the next repo can proceed
